@@ -3,3 +3,5 @@ fastapi>=0.110
 uvicorn>=0.29
 httpx>=0.27
 curl_cffi>=0.16
+# 0.6+ requires cryptography>=47, incompatible with musicdl 2.14.x (<47).
+qqmusic-api-python==0.5.3

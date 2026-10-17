@@ -91,6 +91,27 @@ def _mock_http(handler):
     webui.app.state.http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
 
 
+@pytest.mark.parametrize("path,method", [("status", "GET"), ("login", "POST"),
+    ("login/check", "POST"), ("verify", "POST"), ("logout", "POST")])
+def test_qq_auth_is_admin_only_and_proxies_exact_paths(env_file, path, method):
+    with TestClient(webui.app) as client:
+        assert client.request(method, f"/api/qq/auth/{path}").status_code == 403
+    calls = []
+    with authed_client() as client:
+        def handler(request):
+            calls.append(request)
+            return httpx.Response(200, json={"state": "scan"})
+        _mock_http(handler)
+        response = client.request(method, f"/api/qq/auth/{path}", json={} if method == "POST" else None)
+        assert response.status_code == 200
+        assert response.headers["cache-control"] == "no-store"
+        assert calls[0].url.path == f"/auth/qq/{path}"
+        assert calls[0].method == method
+        assert client.get("/api/qq/auth/credential").status_code == 404
+        assert client.get("/api/qq/auth/logout").status_code == 404
+        assert client.post("/api/qq/auth/login", content="x" * 1025).status_code == 413
+
+
 # ------------------------------------------------------------------ 配置视图 ---
 
 def test_config_view_merges_defaults(env_file):

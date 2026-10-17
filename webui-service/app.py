@@ -1391,6 +1391,29 @@ async def api_public_playlists(target: str = "", request: Request = None):
     )
 
 
+# ------------------------------------------------- QQ 扫码（反代 musicdl） --
+
+@app.api_route("/api/qq/auth/{path:path}", methods=["GET", "POST"])
+async def qq_auth_proxy(path: str, request: Request):
+    allowed = {"status": "GET", "login": "POST", "login/check": "POST",
+               "verify": "POST", "logout": "POST"}
+    if path not in allowed or request.method != allowed[path]:
+        raise HTTPException(404, "unknown QQ auth endpoint")
+    preview_renew("musicdl")
+    body = await request.body()
+    if len(body) > 1024:
+        raise HTTPException(413, "request too large")
+    try:
+        resp = await get_http(request).request(
+            request.method, f"{CONF['musicdl_url']}/auth/qq/{path}",
+            content=body, headers={"Content-Type": "application/json"}, timeout=30.0,
+        )
+    except httpx.HTTPError:
+        raise HTTPException(502, "musicdl 服务暂不可达，请先启用或预览 musicdl 音源") from None
+    return Response(content=resp.content, status_code=resp.status_code,
+                    media_type="application/json", headers={"Cache-Control": "no-store"})
+
+
 # ------------------------------------------------- 网易扫码（反代 musicbox） --
 
 @app.api_route("/api/netease/auth/{path:path}", methods=["GET", "POST"])

@@ -130,6 +130,7 @@ function applyConfigToForm() {
   $$("input[name=provider]").forEach((el) => { el.checked = el.value === provider; });
   syncProviderPanels(provider);
   if (provider === "musicbox") syncNeteaseAccount();
+  if (provider === "musicdl") syncQQAccount();
   const quality = v.FNMUSIC_QUALITY_MODE || "high";
   $$("input[name=quality]").forEach((el) => { el.checked = el.value === quality; });
   const dlQuality = v.FNMUSIC_DL_QUALITY || "app";
@@ -353,6 +354,7 @@ $$("input[name=provider]").forEach((el) =>
     if (el.value && el.value !== savedProvider() && await startPreview(el.value)) {
       if (el.value === "musicdl") await loadPlatforms(false);
     }
+    if (el.value === "musicdl") syncQQAccount();
   }));
 
 /* -------------------------------------------------------------- musicdl 平台 */
@@ -731,6 +733,88 @@ $("#public-prev").addEventListener("click", async () => {
 $("#public-next").addEventListener("click", async () => {
   if (publicState.hasMore) { publicState.page++; await loadPublicList(); }
 });
+
+/* -------------------------------------------------------------- QQ 扫码 */
+let qqLoginTimer = null;
+let qqLoginEpoch = 0;
+
+function stopQQPolling() {
+  qqLoginEpoch++;
+  clearTimeout(qqLoginTimer);
+  qqLoginTimer = null;
+  $("#qq-qr-img").hidden = true;
+  $("#qq-qr-img").removeAttribute("src");
+}
+
+function showQQAccount(st) {
+  $("#qq-login-status").textContent = st.logged_in
+    ? `${st.account} · ${st.verified ? "账号验证成功" : "登录凭据已保存，可点击验证"}`
+    : st.configured ? "QQ 登录已过期，请刷新或重新扫码" : "未登录（使用免登录音源）";
+  $("#qq-logout-btn").disabled = !st.configured;
+  $("#qq-verify-btn").disabled = !st.configured;
+}
+
+async function syncQQAccount() {
+  try { showQQAccount(await api("/api/qq/auth/status")); }
+  catch (exc) { $("#qq-login-status").textContent = exc.message; }
+}
+
+async function qqPost(path, data) {
+  return api(`/api/qq/auth/${path}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data || {}) });
+}
+
+async function pollQQLogin(sessionId, epoch, deadline) {
+  if (epoch !== qqLoginEpoch) return;
+  try {
+    if (Date.now() >= deadline) throw new Error("二维码已过期，请重新生成");
+    const result = await qqPost("login/check", { session_id: sessionId });
+    if (epoch !== qqLoginEpoch) return;
+    const messages = { scan: "等待扫码…", conf: "已扫码，请在手机上确认", done: "QQ 音乐登录成功", timeout: "二维码已过期，请重新生成", refuse: "已取消授权，可重新生成二维码" };
+    $("#qq-login-status").textContent = messages[result.state] || "等待扫码…";
+    if (["done", "timeout", "refuse"].includes(result.state)) {
+      stopQQPolling();
+      if (result.state === "done") { await syncQQAccount(); toast("QQ 登录已保存，请勾选 QQ 平台并保存", "ok"); }
+      return;
+    }
+  } catch (exc) {
+    if (epoch !== qqLoginEpoch) return;
+    $("#qq-login-status").textContent = exc.message;
+    if (Date.now() >= deadline) { stopQQPolling(); return; }
+  }
+  qqLoginTimer = setTimeout(() => pollQQLogin(sessionId, epoch, deadline), 2200);
+}
+
+$("#qq-login-btn").addEventListener("click", async () => {
+  stopQQPolling();
+  const epoch = qqLoginEpoch;
+  $("#qq-login-btn").disabled = true;
+  $("#qq-login-status").textContent = "正在生成二维码…";
+  try {
+    if (!await startPreview("musicdl")) throw new Error("请先启动 musicdl 音源");
+    const result = await qqPost("login", { kind: $("#qq-login-kind").value });
+    if (epoch !== qqLoginEpoch) return;
+    $("#qq-qr-img").src = result.image;
+    $("#qq-qr-img").hidden = false;
+    $("#qq-login-status").textContent = "请用所选方式扫码，并在手机上确认登录";
+    qqLoginTimer = setTimeout(() => pollQQLogin(result.session_id, epoch, Date.now() + result.expires_in * 1000), 2200);
+  } catch (exc) { $("#qq-login-status").textContent = exc.message; }
+  finally { $("#qq-login-btn").disabled = false; }
+});
+
+$("#qq-verify-btn").addEventListener("click", async () => {
+  $("#qq-verify-btn").disabled = true;
+  $("#qq-login-status").textContent = "正在验证 QQ 音乐账号…";
+  try { showQQAccount(await qqPost("verify")); }
+  catch (exc) { $("#qq-login-status").textContent = exc.message; }
+  finally { $("#qq-verify-btn").disabled = false; }
+});
+
+$("#qq-logout-btn").addEventListener("click", async () => {
+  stopQQPolling();
+  try { showQQAccount(await qqPost("logout")); toast("已删除本机 QQ 登录凭据"); }
+  catch (exc) { $("#qq-login-status").textContent = exc.message; }
+});
+window.addEventListener("pagehide", stopQQPolling);
 
 /* -------------------------------------------------------------- 网易扫码 */
 let neteaseLoggedIn = false;

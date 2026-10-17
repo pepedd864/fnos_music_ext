@@ -67,7 +67,7 @@
           <label class="provider-card" data-provider="musicdl">
             <input type="radio" name="provider" value="musicdl">
             <div class="provider-head">musicdl 聚合音源</div>
-            <div class="provider-desc">免登录多平台聚合，自选启用平台</div>
+            <div class="provider-desc">多平台聚合，支持 QQ 音乐账号扫码登录</div>
           </label>
           <label class="provider-card" data-provider="lxmusic">
             <input type="radio" name="provider" value="lxmusic">
@@ -99,6 +99,22 @@
 
         <!-- musicdl：平台多选 -->
         <div class="subpanel" id="panel-musicdl" hidden>
+          <div class="card">
+            <div class="card-title">QQ 音乐账号（可选）</div>
+            <p class="hint">使用你有会员的 QQ 音乐账号扫码，解析使用该账号可访问的官方音质。能否播放由歌曲版权、会员等级和平台接口决定。凭据仅保存在 NAS 私有数据目录。</p>
+            <div class="btn-row">
+              <label for="qq-login-kind">登录方式</label>
+              <select class="input" id="qq-login-kind"><option value="qq">QQ 扫码</option><option value="wx">微信扫码</option></select>
+              <button class="btn" id="qq-login-btn">生成登录二维码</button>
+              <button class="btn" id="qq-verify-btn">验证 / 刷新登录</button>
+              <button class="btn" id="qq-logout-btn">退出登录</button>
+            </div>
+            <div class="qr-area">
+              <img id="qq-qr-img" alt="QQ 音乐登录二维码" hidden>
+              <div id="qq-login-status" class="muted" role="status" aria-live="polite">尚未登录</div>
+            </div>
+            <p class="hint">登录后请在下方勾选「QQMusicClient」并保存启用平台。QQ 登录用手机 QQ 扫码；微信登录用微信扫码，请选择与你会员绑定的方式。</p>
+          </div>
           <div class="card">
             <div class="card-title">启用平台（多选）</div>
             <div class="btn-row">

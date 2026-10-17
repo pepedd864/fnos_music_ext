@@ -33,7 +33,10 @@ except ImportError:
     logger.warning("curl_cffi not installed, falling back to standard httpx client")
 
 from musicdl import musicdl  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from hardening import AdaptiveTimeout, SearchCache, SourceBreaker, SingleFlight, SourceBulkhead, SourceBusy, SearchProgress  # noqa: E402
+from qq_auth import QQAuth, AuthError  # noqa: E402
+from pydantic import BaseModel, Field  # noqa: E402
 
 # 复用仓库根（容器内 /srv）的 proxy.env_merge 解析 .env；独立运行无仓库结构时退回纯环境变量
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -121,6 +124,18 @@ _CACHE_LOCK = threading.Lock()
 _STATS = {"searches": 0, "errors": 0}
 
 
+def _qq_auth_changed():
+    SEARCH_CACHE.clear()
+    with _CACHE_LOCK:
+        for key in list(_SONG_CACHE):
+            if key.startswith("qq:"):
+                _SONG_CACHE.pop(key, None)
+    SOURCE_BREAKER.record_success("QQMusicClient")
+
+
+QQ_AUTH = QQAuth(on_change=_qq_auth_changed)
+
+
 def _source_short(client_name: str) -> str:
     return (client_name or "").replace("MusicClient", "").lower()
 
@@ -200,6 +215,13 @@ def _cache_get(song_id: str):
 
 def _search_one_source(source: str, keyword: str, limit: int) -> list:
     """单个源搜索（工作线程内执行，阻塞）。"""
+    auth_cfg = {}
+    if source == "QQMusicClient":
+        cookies = QQ_AUTH.cookies()
+        if cookies:
+            auth_cfg = {f"default_{phase}_cookies": dict(cookies)
+                        for phase in ("search", "parse", "download")}
+            auth_cfg["disable_print"] = True
     client = musicdl.MusicClient(
         music_sources=[source],
         init_music_clients_cfg={
@@ -209,6 +231,7 @@ def _search_one_source(source: str, keyword: str, limit: int) -> list:
                 "search_size_per_source": min(max(int(limit or 1), 1), int(CONF["search_page_cap"])),
                 "work_dir": CONF["work_dir"],
                 "max_retries": 1,
+                **auth_cfg,
             },
         },
         clients_threadings={source: 1},
@@ -379,6 +402,7 @@ def _search_playable(source: str, keyword: str, fetch_size: int, limit: int,
 
 async def _refresh_by_keyword(song_id: str) -> dict | None:
     """URL 过期或下载失败后按缓存的关键词重搜一次，找回同 ID 的曲目。"""
+    generation = QQ_AUTH.generation
     entry = _cache_get(song_id)
     if not entry or not entry.get("keyword"):
         return None
@@ -391,7 +415,10 @@ async def _refresh_by_keyword(song_id: str) -> dict | None:
             time.monotonic() + timeout, timeout=timeout,
         )
     except Exception as exc:
-        logger.warning("Refresh failed for %s: %s", song_id, exc)
+        logger.warning("Refresh failed for %s: %s", song_id,
+                       type(exc).__name__ if song_id.startswith("qq:") else exc)
+        return None
+    if generation != QQ_AUTH.generation:
         return None
     for item, headers, lyric in entries:
         _cache_put(item, entry["keyword"], headers, lyric)
@@ -623,11 +650,51 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        await QQ_AUTH.close()
         await app.state.http.aclose()
         SOURCE_WORKERS.shutdown(wait=False)
 
 
 app = FastAPI(title="musicdl-service", lifespan=lifespan)
+
+
+class QQLoginRequest(BaseModel):
+    kind: str = "qq"
+
+
+class QQCheckRequest(BaseModel):
+    session_id: str = Field(min_length=1, max_length=128)
+
+
+@app.exception_handler(AuthError)
+async def qq_auth_error(request: Request, exc: AuthError):
+    return JSONResponse({"detail": str(exc)}, status_code=502,
+                        headers={"Cache-Control": "no-store"})
+
+
+@app.get("/auth/qq/status")
+async def qq_status():
+    return JSONResponse(QQ_AUTH.status(), headers={"Cache-Control": "no-store"})
+
+
+@app.post("/auth/qq/login")
+async def qq_login(body: QQLoginRequest):
+    return JSONResponse(await QQ_AUTH.start(body.kind), headers={"Cache-Control": "no-store"})
+
+
+@app.post("/auth/qq/login/check")
+async def qq_login_check(body: QQCheckRequest):
+    return JSONResponse(await QQ_AUTH.check(body.session_id), headers={"Cache-Control": "no-store"})
+
+
+@app.post("/auth/qq/verify")
+async def qq_verify():
+    return JSONResponse(await QQ_AUTH.verify(), headers={"Cache-Control": "no-store"})
+
+
+@app.post("/auth/qq/logout")
+async def qq_logout():
+    return JSONResponse(await QQ_AUTH.logout(), headers={"Cache-Control": "no-store"})
 
 
 @app.get("/healthz")
@@ -680,6 +747,9 @@ async def search(
     raw_src_list = list(dict.fromkeys(raw_src_list))
     sources_key = ",".join(sorted(raw_src_list))
     cache_key = f"{sources_key}|limit={limit}"
+    auth_generation = QQ_AUTH.generation
+    if "QQMusicClient" in raw_src_list:
+        cache_key += f"|qq_auth={auth_generation}"
     _STATS["searches"] += 1
 
     async def _do_search() -> dict:
@@ -713,7 +783,10 @@ async def search(
         def collect(source):
             progress = progress_by_source.get(source)
             items = []
-            for item, headers, lyric in progress.finish() if progress else []:
+            entries = progress.finish() if progress else []
+            if source == "QQMusicClient" and auth_generation != QQ_AUTH.generation:
+                return []
+            for item, headers, lyric in entries:
                 _cache_put(item, keyword, headers, lyric)
                 items.append(item)
             return items
@@ -759,6 +832,8 @@ async def search(
             except Exception as e:  # 单源失败不影响其他源
                 _STATS["errors"] += 1
                 SOURCE_BREAKER.record_failure(source)
+                if source == "QQMusicClient":
+                    return source, collect(source), (str(e) if isinstance(e, AuthError) else "QQ 音源请求失败，请检查网络或验证账号")
                 return source, collect(source), f"{type(e).__name__}: {e}"
 
         results: list = []
@@ -812,6 +887,10 @@ async def search(
                     all_items.append(item)
 
         errors = {src: err for src, _, err in results if err}
+        if "QQMusicClient" in raw_src_list and auth_generation != QQ_AUTH.generation:
+            # A login/logout during a search must not repopulate old URLs.
+            all_items = [item for item in all_items if not item["id"].startswith("qq:")]
+            errors["QQMusicClient"] = "QQ 登录状态已改变，请重新搜索"
         for s in raw_src_list:
             if s not in active_src_list:
                 errors.setdefault(s, "circuit breaker open")
