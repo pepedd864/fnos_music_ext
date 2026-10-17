@@ -2510,7 +2510,7 @@ async def fetch_upstream_envelope(request: Request, client: httpx.AsyncClient) -
     return payload
 
 
-async def fetch_musicdl_search(client: httpx.AsyncClient, keyword: str, limit: int, sources: str | None = None) -> dict | None:
+async def fetch_musicdl_search(client: httpx.AsyncClient, keyword: str, limit: int, sources: str | None = None, *, page: int = 1) -> dict | None:
     if not keyword:
         return None
     scope = _FETCH_SCOPE.get()
@@ -2531,6 +2531,8 @@ async def fetch_musicdl_search(client: httpx.AsyncClient, keyword: str, limit: i
 
     async def _query():
         params: dict[str, Any] = {"keyword": keyword, "limit": limit}
+        if page > 1:
+            params["page"] = page
         selected_sources = CONF["online_sources"] if sources is None else sources
         if selected_sources:
             params["sources"] = selected_sources
@@ -2549,6 +2551,9 @@ async def fetch_musicdl_search(client: httpx.AsyncClient, keyword: str, limit: i
             logger.warning("musicdl search partial errors: %s", data.get("errors"))
         return data
 
+    # Explicit next pages bypass the first-page cancellation gate.
+    if page > 1:
+        return await _query()
     return await _MUSICDL_SEARCH_GATE.run(scope, keyword, _query)
 
 
@@ -4312,11 +4317,18 @@ def _online_window(entry: dict, page: int, size: int, local_total: int) -> list[
     return window
 
 
+def _qq_catalog_enabled() -> bool:
+    selected = {s.strip().casefold() for s in str(CONF.get("online_sources") or "").split(",")}
+    return bool(CONF.get("musicdl_enabled") and selected.intersection({"qq", "qqmusicclient"}))
+
+
 def _deep_sources_available(entry: dict) -> bool:
     """深分页是否还有可取的源：启用且未取尽，且未达 max_pages 封顶。"""
     if int(entry.get("deep_round") or 1) >= max(1, int(CONF.get("search_deep_max_pages") or 10)):
         return False
     exhausted = entry.get("exhausted") or set()
+    if _qq_catalog_enabled() and "qq" not in exhausted:
+        return True
     for name in ("netease", "lx"):
         if CONF.get(f"{name}_enabled") and name not in exhausted:
             return True
@@ -4327,8 +4339,8 @@ async def _extend_search(request: Request, keyword: str, entry: dict) -> None:
     """深分页增量取页：向未取尽的在线源取下一页并追加进在线池。
 
     只追加不重排（_online_window 的前缀稳定承诺）。取尽判定：某源本轮
-    返回空列表，或去重后对池 0 新增（上游开始重复自身）。musicdl 库无
-    分页参数，不参与深分页。绕过代理侧取消门——翻页是用户主动行为；
+    返回空列表，或去重后对池 0 新增（上游开始重复自身）。QQ 使用独立
+    资料接口翻页，其他 musicdl 源仍只取首屏。绕过代理侧取消门——翻页是用户主动行为；
     lx 请求仍带 scope 头，lx 服务端的同词取消门自然生效。
     """
     scope = entry.get("credentials") or _credential_scope(request)
@@ -4336,7 +4348,7 @@ async def _extend_search(request: Request, keyword: str, entry: dict) -> None:
     if _user_search_stale(entry, scope):
         return
     if round_no >= max(1, int(CONF.get("search_deep_max_pages") or 10)):
-        entry.setdefault("exhausted", set()).update({"netease", "lx"})
+        entry.setdefault("exhausted", set()).update({"netease", "lx", "qq"})
         return
     token = _FETCH_SCOPE.set(scope)
     try:
@@ -4344,6 +4356,11 @@ async def _extend_search(request: Request, keyword: str, entry: dict) -> None:
         exhausted = entry.setdefault("exhausted", set())
         cursors = entry.setdefault("deep_cursors", {})
         seen_ids = entry.setdefault("source_seen_ids", {})
+
+        if _qq_catalog_enabled() and "qq" not in exhausted:
+            fetches.append(("qq", fetch_musicdl_search(
+                get_musicdl_client(request.app), keyword, CONF["online_limit"],
+                sources="QQMusicClient", page=cursors.get("qq", 1) + 1)))
 
         if CONF.get("netease_enabled") and "netease" not in exhausted:
             limit = int(CONF["netease_search_limit"])
@@ -4361,6 +4378,8 @@ async def _extend_search(request: Request, keyword: str, entry: dict) -> None:
             return
         merged = list(entry["items"])
         for (name, _), result in zip(fetches, results):
+            if name == "qq" and isinstance(result, dict):
+                result = None if result.get("errors") else result.get("items", [])
             if isinstance(result, BaseException) or result is None:
                 # 瞬时失败不判取尽，下一轮重试当前游标
                 logger.warning("deep page fetch %s failed: %s", name, result)
@@ -4384,7 +4403,7 @@ async def _extend_search(request: Request, keyword: str, entry: dict) -> None:
             merged = deduplicate_online_items(merged + items)[:2000]
 
         if len(merged) >= 2000:
-            exhausted.update({"netease", "lx"})
+            exhausted.update({"netease", "lx", "qq"})
         entry["items"] = merged
         entry["deep_round"] = round_no + 1
         entry["accessed"] = time.time()
@@ -5279,8 +5298,12 @@ async def _open_online_stream(request: Request, guid: str, range_header: str | N
         # 仅 musicdl 通道会服务端透明降级（坏无损流→官方 mp3 档）：以实际
         # content-type 为准修正扩展名，避免 mp3 字节按 .flac 命名入库。
         # 网易/洛雪直链相反——上游会错报 audio/mpeg，扩展名以解析结果为准。
-        if via_musicdl and "audio/mpeg" in content_type and (not ext or ext in _LOSSLESS_EXTS):
-            ext = "mp3"
+        if via_musicdl:
+            actual_format = resp.headers.get("x-audio-format", "").lower()
+            if actual_format in {"flac", "mp3"}:
+                ext = actual_format
+            elif "audio/mpeg" in content_type and (not ext or ext in _LOSSLESS_EXTS):
+                ext = "mp3"
         result = (resp, owned, ext, info, chunks, first)
         resp = owned = None  # transfer ownership to response iterator
         return result
@@ -6876,7 +6899,7 @@ async def _fetch_online_info(request: Request, guid: str, include_lyric: bool = 
     musicdl_client = get_musicdl_client(request.app)
     song_id = song_id_from_online_guid(guid)
     try:
-        r = await musicdl_client.get("/info", params={"id": song_id}, timeout=10.0)
+        r = await musicdl_client.get("/info", params={"id": song_id, "include_lyric": str(include_lyric).lower()}, timeout=10.0)
         if r.status_code == 200:
             data = r.json()
             if isinstance(data, dict) and data.get("ok") is not False:

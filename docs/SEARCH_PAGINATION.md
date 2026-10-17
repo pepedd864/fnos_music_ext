@@ -67,7 +67,8 @@ GET /music/api/v1/search/track?q=<关键词>&page=<页号>&size=<页大小>
 | --- | --- | --- |
 | 网易（musicbox） | ✅ | `/api/v1/search` 新增 `offset` 参数；CLI 无 offset，`offset>0` 直接走官方 web 搜索接口（`api/search/get/web`，原生 offset 分页） |
 | 洛雪（lxmusic） | ✅ | `/api/v1/search` 新增 `page` 参数，透传到五平台上游分页参数：kg `page`、wy `offset`、mg `pageNo`、tx `page_num`、kw `pn` |
-| musicdl | ❌ | musicdl 库 `search()` 无分页参数（`search_size_per_source` 为页大小且封顶 10 保延迟），只参与首屏聚合 |
+| musicdl / QQ | ✅ | 显式选择 `QQMusicClient` 时使用 QQ 资料接口；`/search?page=` 按固定 `limit` 翻页，搜索不解析音频 |
+| musicdl / 其他平台 | ❌ | musicdl 库 `search()` 无分页参数（`search_size_per_source` 为页大小且封顶 10 保延迟），只参与首屏聚合 |
 
 配置（均可热重载、管理页「搜索」页可改）：
 

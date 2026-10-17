@@ -74,6 +74,9 @@ def clean_state(monkeypatch):
     workers = SourceBulkhead(app_module.SOURCE_NAMES.values())
     monkeypatch.setattr(app_module, "SOURCE_WORKERS", workers)
     monkeypatch.setattr(app_module, "SINGLE_FLIGHT", SingleFlight())
+    monkeypatch.setattr(app_module, "QQ_FLIGHT", SingleFlight())
+    monkeypatch.setattr(app_module, "_QQ_RESOLVED", {})
+    monkeypatch.setattr(app_module, "_QQ_RESOLVE_TASKS", {})
     monkeypatch.setattr(app_module, "_probe_playable_sync", lambda url, headers: True)
     monkeypatch.setitem(app_module.CONF, "search_timeout", 4.0)
     monkeypatch.setitem(app_module.CONF, "adaptive_min_timeout", 1.0)
@@ -154,11 +157,11 @@ async def test_logout_during_search_rejects_old_qq_urls(clean_state, monkeypatch
     app_module.SOURCE_WORKERS.shutdown()
     monkeypatch.setattr(app_module, "SOURCE_WORKERS", SourceBulkhead(["QQMusicClient"]))
 
-    def slow(source, keyword, limit):
-        time.sleep(0.05)
-        return [_FakeSong(1, source)]
+    async def slow(keyword, limit, page=1):
+        await asyncio.sleep(0.05)
+        return [{"id": "qq:1", "source": "qq", "title": "Song", "resolve_on_play": True}]
 
-    monkeypatch.setattr(app_module, "_search_one_source", slow)
+    monkeypatch.setattr(app_module.QQ_CATALOG, "search", slow)
     pending = asyncio.create_task(app_module.search(keyword="test", limit=1, sources="qq"))
     await asyncio.sleep(0.01)
     await auth.logout()
@@ -440,7 +443,6 @@ def test_consecutive_keyword_searches_wait_for_busy_source(clean_state, monkeypa
     ("HTQYYMusicClient", "htqyy"),
     ("FiveSingMusicClient", "FiVeSiNg"),
     ("MyFreeMP3MusicClient", "myfreemp3"),
-    ("QQMusicClient", "qqmusicclient"),
 ])
 def test_canonical_search_and_refresh_mapping(clean_state, monkeypatch, canonical, alias):
     monkeypatch.setitem(app_module.CONF, "sources", [canonical])

@@ -114,6 +114,21 @@ def main():
             import curl_cffi
             assert callable(musicdl.MusicClient)
             assert curl_cffi.requests.Session
+            # Build (do not await/send) public SDK requests against the pinned
+            # production package. Catches API drift without live QQ traffic.
+            from qqmusic_api import Client
+            from qqmusic_api.modules.song import SongFileInfo, SongFileType
+            async def qq_contract():
+                client = Client(device_path=str(Path(home) / "qq-device.json"))
+                try:
+                    requests = [client.search.search_by_type("fixture", num=30, page=2, highlight=False),
+                                client.song.query_song(["abc123"]),
+                                client.song.get_song_urls([SongFileInfo("abc123", file_type=SongFileType.FLAC)]),
+                                client.lyric.get_lyric("abc123")]
+                    assert all(hasattr(req, "__await__") for req in requests)
+                finally:
+                    await client.close()
+            asyncio.run(qq_contract())
         else:
             from lxserver_client import SUPPORTED_PLATFORMS
             from verify_source import parse_script_meta
