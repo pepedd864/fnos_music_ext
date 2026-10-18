@@ -36,7 +36,7 @@ from musicdl import musicdl  # noqa: E402
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from hardening import AdaptiveTimeout, SearchCache, SourceBreaker, SingleFlight, SourceBulkhead, SourceBusy, SearchProgress  # noqa: E402
 from qq_auth import QQAuth, AuthError  # noqa: E402
-from qq_catalog import QQCatalog, CatalogError  # noqa: E402
+from qq_catalog import QQCatalog, CatalogError, validate_quality  # noqa: E402
 from pydantic import BaseModel, Field  # noqa: E402
 
 # 复用仓库根（容器内 /srv）的 proxy.env_merge 解析 .env；独立运行无仓库结构时退回纯环境变量
@@ -590,11 +590,14 @@ async def _qq_metadata(song_id: str):
 
 async def _resolve_qq(song_id: str, quality="", force=False):
     try:
+        quality = validate_quality(quality)
+    except CatalogError as exc:
+        raise HTTPException(exc.status, str(exc)) from None
+    try:
         QQ_AUTH.cookies()  # Detect expiry even while an audio URL is cached.
     except AuthError as exc:
         raise HTTPException(401, str(exc)) from None
     generation = QQ_AUTH.generation
-    quality = "mp3" if quality == "mp3" else ""
     key = (song_id, quality, generation)
 
     async def resolve():
@@ -1011,7 +1014,7 @@ async def search(
 
 
 @app.get("/info")
-async def info(id: str = Query(..., min_length=1), include_lyric: bool = True):
+async def info(id: str = Query(..., min_length=1), include_lyric: bool = True, quality: str = ""):
     generation = QQ_AUTH.generation
     entry = _cache_get(id)
     if id.startswith("qq:"):
@@ -1030,6 +1033,19 @@ async def info(id: str = Query(..., min_length=1), include_lyric: bool = True):
     if entry is None:
         raise HTTPException(404, f"song id {id!r} not found in cache: cache expired or service restarted; re-search keyword and source once, then retry")
     item = entry["item"]
+    audio_quality = ""
+    if id.startswith("qq:"):
+        try:
+            quality = validate_quality(quality)
+        except CatalogError as exc:
+            raise HTTPException(exc.status, str(exc)) from None
+        resolved = _QQ_RESOLVED.get((id, quality, generation))
+        if resolved:
+            item = {**item, "ext": resolved["entry"]["item"]["ext"], "file_size": 0}
+            audio_quality = {"AI00": "master", "F000": "lossless", "M800": "mp3_320",
+                             "M500": "mp3_128"}.get(resolved["rendition"], "")
+        elif quality in ("mp3", "mp3_320", "mp3_128"):
+            item = {**item, "ext": "mp3", "file_size": 0}
     return {
         "ok": True,
         "id": item.get("id"),
@@ -1042,6 +1058,7 @@ async def info(id: str = Query(..., min_length=1), include_lyric: bool = True):
         "file_size": item.get("file_size"),
         "cover_url": item.get("cover_url"),
         "lyric": entry.get("lyric", ""),
+        **({"audio_quality": audio_quality} if id.startswith("qq:") else {}),
     }
 
 
@@ -1049,7 +1066,7 @@ async def info(id: str = Query(..., min_length=1), include_lyric: bool = True):
 async def stream(
     id: str = Query(...),
     proxy: bool = Query(False, description="true=字节流透传而非302"),
-    quality: str = Query("", description="mp3=跳过无损档直接取有损直链（上游无损流损坏时上层降级用）"),
+    quality: str = Query("", description="QQ: high/balanced/smooth/master/lossless/mp3_320/mp3_128；mp3 为兼容降级档"),
     range_header: str | None = Header(None, alias="Range", description="客户端请求头中的 Range"),
 ):
     entry = await _resolve_entry(id, quality=quality)

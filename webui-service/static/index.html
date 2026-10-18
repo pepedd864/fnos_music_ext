@@ -166,16 +166,31 @@
             <label><input type="radio" name="quality" value="balanced"><div><b>平衡</b><span>取中间档（偶数档取中间偏高），失败先降后升</span></div></label>
             <label><input type="radio" name="quality" value="smooth"><div><b>流畅</b><span>优先最低档，最快出声</span></div></label>
           </div>
-          <p class="hint">音质偏好只影响在线播放/搜索时按什么档位取歌（高音质=优先无损原文件）。</p>
+          <p class="hint">影响在线取歌的优先档位。QQ 音乐选「自动」时也跟随此偏好；高音质优先母带/无损，平衡优先普通无损，流畅优先 MP3 128k。</p>
+        </div>
+        <div class="card">
+          <div class="card-title">QQ 音乐音质</div>
+          <label class="stack" for="qq-quality">原音质播放与原文件下载
+            <select class="input" id="qq-quality">
+              <option value="auto">自动 · 跟随音质偏好</option>
+              <option value="master">母带 FLAC 优先</option>
+              <option value="lossless">无损 FLAC 优先</option>
+              <option value="mp3_320">MP3 320k 优先</option>
+              <option value="mp3_128">MP3 128k · 省流</option>
+            </select>
+          </label>
+          <p class="hint">只请求账号有权播放的完整音频；指定档位不可用时逐级降低，128k 无可用音频则提示失败。「自动」按上方偏好排序。</p>
+          <p class="hint">自动跟随飞牛 App：App 选「原音质」使用此处设置，选「标准」优先从 QQ 取 MP3 320k（不可用再试 128k），播放转为 AAC 分片，标准下载直接保存 MP3。无需先拉取大体积无损文件。</p>
+          <p class="hint">保存后下次播放生效；当前播放与拖动进度保持原档位。各档位缓存和保存文件独立，旧文件保留。本地曲库歌曲由飞牛自身设置控制。</p>
         </div>
         <div class="card">
           <div class="card-title">下载音质</div>
           <div class="radio-list" id="dl-quality-list">
-            <label><input type="radio" name="dl-quality" value="app"><div><b>跟随 App</b><span>App 明确选"标准"才交 MP3，其余一律无损原文件（FLAC 等）</span></div></label>
-            <label><input type="radio" name="dl-quality" value="original"><div><b>无损原文件</b><span>下载一律交付原文件，App 选"标准"也不转码</span></div></label>
-            <label><input type="radio" name="dl-quality" value="standard"><div><b>MP3 320k</b><span>一律按官方"标准"档交 MP3 320kbps（省空间，与官方一致）</span></div></label>
+            <label><input type="radio" name="dl-quality" value="app"><div><b>跟随 App</b><span>App 选"标准"下载 MP3，其余使用原音质设置</span></div></label>
+            <label><input type="radio" name="dl-quality" value="original"><div><b>原音质文件</b><span>始终使用原音质设置，忽略 App 的"标准"选项</span></div></label>
+            <label><input type="radio" name="dl-quality" value="standard"><div><b>MP3 320k 优先</b><span>始终使用标准档；QQ 优先 320k，不可用时回落 128k</span></div></label>
           </div>
-          <p class="hint">只影响在 App 里点"下载"拿到的文件。默认"跟随 App"：无损歌曲不再被擅自转成 MP3（2.7.0 及以前的标准档缺省行为已修正）。保存后立即生效。</p>
+          <p class="hint">只影响在 App 里点"下载"拿到的文件。默认"跟随 App"。QQ 的原音质文件按上方「QQ 音乐音质」选档，可能是 FLAC 或 MP3。保存后立即生效。</p>
         </div>
         <div class="card">
           <div class="card-title">推荐</div>

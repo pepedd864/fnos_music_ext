@@ -250,3 +250,60 @@ async def test_stream_passes_range_and_actual_format_without_decode_probe(native
     assert response.status_code == 206 and response.headers["x-audio-format"] == "flac"
     assert response.headers["content-range"] == "bytes 2-5/10" and headers[0]["Range"] == "bytes=2-5"
     assert b"".join([chunk async for chunk in response.body_iterator]) == b"data"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("quality,expected", [
+    ("high", ["AI00", "F000", "M800", "M500"]),
+    ("master", ["AI00", "F000", "M800", "M500"]),
+    ("lossless", ["F000", "M800", "M500"]),
+    ("mp3_320", ["M800", "M500"]), ("mp3_128", ["M500"]),
+    ("balanced", ["F000", "M800", "M500", "AI00"]),
+    ("smooth", ["M500", "M800", "F000", "AI00"]),
+])
+async def test_quality_preference_selects_authorized_tier_without_upgrading(tmp_path, formats, quality, expected):
+    requests = []
+
+    class Client:
+        def __init__(self):
+            self.song = self
+
+        async def get_song_urls(self, files):
+            requests.append([prefix for _, prefix in files])
+            # Only the last eligible tier is authorized: fallback must stay
+            # inside the selected ladder and require just one batch call.
+            prefix = expected[-1]
+            ext = ".flac" if prefix in ("AI00", "F000") else ".mp3"
+            return types.SimpleNamespace(expiration=300, data=[types.SimpleNamespace(
+                mid="abc123", filename=f"{prefix}abc123{ext}", purl=f"{prefix}abc123{ext}", result=0)])
+
+        async def close(self):
+            pass
+
+    catalog = QQCatalog(QQAuth(tmp_path), lambda *a, **kw: Client())
+    assert (await catalog.resolve("qq:abc123", quality))["rendition"] == expected[-1]
+    assert requests == [expected]
+
+
+@pytest.mark.asyncio
+async def test_explicit_quality_caches_and_refresh_pins_are_independent(native):
+    await asyncio.gather(service._resolve_qq("qq:abc123", "lossless"),
+                         service._resolve_qq("qq:abc123", "mp3_128"))
+    assert len(native[2]) == 2
+    await service._resolve_qq("qq:abc123", "lossless")
+    assert len(native[2]) == 2
+    await service._resolve_qq("qq:abc123", "mp3_128", force=True)
+    assert native[2][-1] == ("qq:abc123", "mp3_128", "F000")
+    with pytest.raises(HTTPException) as error:
+        await service._resolve_qq("qq:abc123", "invented")
+    assert error.value.status_code == 400 and len(native[2]) == 3
+
+
+@pytest.mark.asyncio
+async def test_quality_metadata_does_not_resolve_and_reports_selected_audio(native):
+    data = await service.info(id="qq:abc123", include_lyric=False, quality="mp3_128")
+    assert data["ext"] == "mp3" and not native[2]
+    await service._resolve_qq("qq:abc123", "lossless")
+    data = await service.info(id="qq:abc123", include_lyric=False, quality="lossless")
+    assert data["ext"] == "flac" and data["audio_quality"] == "lossless"
+    assert data["title"] == "Fixture" and len(native[2]) == 1

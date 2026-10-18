@@ -140,7 +140,7 @@ def test_ordered_stream_alternatives_unknown_bitrate_keep_tail(monkeypatch):
 
 _HOT_ENV_KEYS = [
     "musicdl_enabled", "netease_enabled", "lx_enabled", "online_sources", "lx_sources",
-    "quality_mode", "tee_save_enabled", "tee_save_dir", "tee_cache_max", "cache_dir",
+    "quality_mode", "qq_quality", "tee_save_enabled", "tee_save_dir", "tee_cache_max", "cache_dir",
     "recommend_hot", "recommend_daily", "cover_enrich", "llm_base_url", "llm_model",
     "search_timeout",
 ]
@@ -156,7 +156,7 @@ def conf_guard():
     snapshot = {k: CONF[k] for k in _HOT_ENV_KEYS if k in CONF}
     env_keys = [
         "FNMUSIC_MUSICDL_ENABLED", "FNMUSIC_NETEASE_ENABLED", "FNMUSIC_LX_ENABLED",
-        "FNMUSIC_ONLINE_SOURCES", "LX_SOURCES", "FNMUSIC_QUALITY_MODE",
+        "FNMUSIC_ONLINE_SOURCES", "LX_SOURCES", "FNMUSIC_QUALITY_MODE", "FNMUSIC_QQ_QUALITY",
         "FNMUSIC_TEE_SAVE_ENABLED", "FNMUSIC_TEE_SAVE_DIR", "FNMUSIC_TEE_CACHE_MAX",
         "FNMUSIC_CACHE_DIR",
         "FNMUSIC_RECOMMEND_HOT", "FNMUSIC_RECOMMEND_DAILY", "FNMUSIC_COVER_ENRICH",

@@ -12,10 +12,20 @@ from urllib.parse import urljoin, urlsplit
 from qq_auth import AuthError
 
 
+QQ_QUALITIES = {"", "high", "balanced", "smooth", "master", "lossless", "mp3_320", "mp3_128", "mp3"}
+
+
 class CatalogError(Exception):
     def __init__(self, message, status=502):
         super().__init__(message)
         self.status = status
+
+
+def validate_quality(quality):
+    quality = str(quality or "").strip().lower()
+    if quality not in QQ_QUALITIES:
+        raise CatalogError("不支持的 QQ 音质档位", 400)
+    return quality
 
 
 def normalize(row):
@@ -115,13 +125,22 @@ class QQCatalog:
 
     async def resolve(self, song_id, quality="", rendition=None):
         mid = self.mid(song_id)
+        quality = validate_quality(quality)
         async def query(client):
             from qqmusic_api.modules.song import SongFileInfo, SongFileType
             formats = [SongFileType.MASTER, SongFileType.FLAC, SongFileType.MP3_320, SongFileType.MP3_128]
             if rendition:
                 formats = [f for f in formats if f.s == rendition]
-            elif quality == "mp3":
+            elif quality in ("mp3", "mp3_320"):
                 formats = formats[2:]
+            elif quality == "mp3_128":
+                formats = formats[3:]
+            elif quality == "lossless":
+                formats = formats[1:]
+            elif quality == "balanced":
+                formats = formats[1:] + formats[:1]
+            elif quality == "smooth":
+                formats = list(reversed(formats))
             result = await client.song.get_song_urls([SongFileInfo(mid, file_type=f) for f in formats])
             for fmt in formats:
                 for row in result.data:

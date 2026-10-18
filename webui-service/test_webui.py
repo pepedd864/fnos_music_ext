@@ -64,6 +64,18 @@ def authed_client():
         yield client
 
 
+def test_qq_quality_is_validated_and_saved_without_process_restart(env_file, svctl):
+    with authed_client() as client:
+        config = client.get("/api/config").json()
+        assert config["values"]["FNMUSIC_QQ_QUALITY"] == "auto"
+        assert client.put("/api/config", json={"values": {"FNMUSIC_QQ_QUALITY": "ultra"}}).status_code == 400
+        for quality in ("master", "lossless", "mp3_320", "mp3_128", "auto"):
+            response = client.put("/api/config", json={"values": {"FNMUSIC_QQ_QUALITY": quality}})
+            assert response.status_code == 200
+            assert client.get("/api/config").json()["values"]["FNMUSIC_QQ_QUALITY"] == quality
+    assert not any(call[0] in ("start", "stop", "restart") for call in svctl.calls)
+
+
 @pytest.fixture
 def svctl(monkeypatch):
     calls: list[tuple] = []

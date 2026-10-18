@@ -118,6 +118,7 @@ chmod +x install.sh extend.sh restore.sh proxy/run_proxy.sh
 | 常用设置 | 配置项 | 说明 |
 | :--- | :--- | :--- |
 | 播放音质 | `FNMUSIC_QUALITY_MODE` | `high` / `balanced` / `smooth` |
+| QQ 原音质档位 | `FNMUSIC_QQ_QUALITY` | `auto` 跟随播放偏好，或 `master` / `lossless` / `mp3_320` / `mp3_128`；飞牛 App 标准档优先取 MP3 320k，失败降至 128k |
 | App 下载音质 | `FNMUSIC_DL_QUALITY` | `app` / `original` / `standard`；跟随 App 时仅显式标准档转 MP3，否则交付原文件 |
 | 边听边存 | `FNMUSIC_TEE_SAVE_ENABLED` | 默认开启 |
 | 下载 / 缓存目录 | `FNMUSIC_TEE_SAVE_DIR` / `FNMUSIC_CACHE_DIR` | 留空分别自动探测共享曲库 / 使用安装目录 `cache` |
