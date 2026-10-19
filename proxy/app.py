@@ -1312,6 +1312,48 @@ def strip_source_tag(title: str) -> str:
     return t
 
 
+def _qq_display_audio(item: dict, guid: str) -> dict:
+    """Project catalog sizes to this play preference without resolving media.
+
+    Keep all declared variants in snapshots so changing quality can rebuild old
+    playlists offline. These are catalog facts, not account-authorization claims.
+    A resolved rendition takes precedence over the requested/fallback ladder.
+    """
+    if source_from_online_guid(guid) != "qq":
+        return item
+    variants = item.get("audio_variants") or {}
+    if not isinstance(variants, dict):
+        variants = {}
+    ladders = {
+        "high": ("master", "lossless", "mp3_320", "mp3_128"),
+        "master": ("master", "lossless", "mp3_320", "mp3_128"),
+        "lossless": ("lossless", "mp3_320", "mp3_128"),
+        "balanced": ("lossless", "mp3_320", "mp3_128", "master"),
+        "smooth": ("mp3_128", "mp3_320", "lossless", "master"),
+        "mp3_320": ("mp3_320", "mp3_128"),
+        "mp3_128": ("mp3_128",),
+    }
+    preference = _qq_delivery_quality(_qq_delivery_guid(guid))
+    choices = ladders.get(preference, ladders["high"])
+    actual = str(item.get("audio_quality") or "")
+    selected = actual if actual in {"master", "lossless", "mp3_320", "mp3_128"} else ""
+    if not selected:
+        selected = next((q for q in choices if isinstance(variants.get(q), dict)
+                         and int(variants[q].get("file_size") or 0) > 0), "")
+    if not selected:
+        if preference not in {"mp3_128", "mp3_320", "smooth"}:
+            return item  # Legacy snapshots have no per-tier catalog information.
+        selected = "mp3_320" if preference == "mp3_320" else "mp3_128"
+    variant = variants.get(selected) or {}
+    size = max(0, int(variant.get("file_size") or 0))
+    # Never label a FLAC byte count as MP3. Unknown legacy sizes remain unknown.
+    if not size and actual and item.get("ext") == ("mp3" if selected.startswith("mp3_") else "flac"):
+        size = max(0, int(item.get("file_size") or 0))
+    return {**item, "ext": "mp3" if selected.startswith("mp3_") else "flac",
+            "file_size": size,
+            "bitrate": {"mp3_128": 128000, "mp3_320": 320000}.get(selected, 0)}
+
+
 def build_online_track(item: dict, mark_source: bool = False) -> dict:
     """对齐飞牛前端 ZQ 解构 / _h() 期望：artists、album 对象、genres 数组、audioSpec、duration 毫秒。
 
@@ -1319,6 +1361,7 @@ def build_online_track(item: dict, mark_source: bool = False) -> dict:
     收藏/历史/元数据等其余出口保持干净标题，业务逻辑一律不受标记影响。
     """
     guid = online_guid_from_item(item)
+    item = _qq_display_audio(item, guid)
     src = str(item.get("source") or source_from_online_guid(guid) or "")
     title = str(item.get("title") or item.get("name") or "")
     if item.get("needs_vip") is True and title and not title.startswith(_SOURCE_TAG_VIP):
@@ -1371,7 +1414,7 @@ def build_online_track(item: dict, mark_source: bool = False) -> dict:
         "channel": 2,
         "sampleRate": 44100,
         "bitDepth": 16 if play_format in ("wav", "flac", "aiff") else None,
-        "bitrate": 1411000 if play_format in ("flac", "wav", "ape", "wv") else 320000,
+        "bitrate": item.get("bitrate", 1411000 if play_format in ("flac", "wav", "ape", "wv") else 320000),
     }
     audio_spec = {k: v for k, v in audio_spec.items() if v is not None}
 
@@ -1409,6 +1452,8 @@ def build_online_track(item: dict, mark_source: bool = False) -> dict:
         "hasLyric": True,
         "genres": [],
         "accessStatus": 0,
+        **({"audioVariants": item["audio_variants"]}
+           if src == "qq" and item.get("audio_variants") else {}),
     }
 
 
@@ -7618,6 +7663,8 @@ def _snapshot_to_info(track: dict) -> dict:
     重建时需映射回 artist/duration_s/ext；info 形状的历史快照字段已对齐则原样保留。
     """
     info = dict(track)
+    if isinstance(track.get("audioVariants"), dict):
+        info["audio_variants"] = track["audioVariants"]
     artists = track.get("artists")
     if not info.get("artist") and isinstance(artists, list) and artists and isinstance(artists[0], dict):
         info["artist"] = artists[0].get("name") or ""
@@ -7702,6 +7749,8 @@ def build_favorite_track_obj(
         "createdAt": ts,
         "updatedAt": ts,
     }
+    if vo.get("audioVariants"):
+        obj["audioVariants"] = vo["audioVariants"]
 
     if isinstance(template, dict) and template:
         # 以官方真实条目为结构底版，再用在线字段全覆盖：本侧未构造的官方字段

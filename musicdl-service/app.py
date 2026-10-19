@@ -1058,7 +1058,8 @@ async def info(id: str = Query(..., min_length=1), include_lyric: bool = True, q
         "file_size": item.get("file_size"),
         "cover_url": item.get("cover_url"),
         "lyric": entry.get("lyric", ""),
-        **({"audio_quality": audio_quality} if id.startswith("qq:") else {}),
+        **({"audio_quality": audio_quality, "audio_variants": item.get("audio_variants") or {}}
+           if id.startswith("qq:") else {}),
     }
 
 

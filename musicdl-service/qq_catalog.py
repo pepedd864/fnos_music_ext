@@ -38,13 +38,27 @@ def normalize(row):
     album = row.get("album") or {}
     album_mid = str(album.get("mid") or "")
     sizes = row.get("file") or {}
-    lossless = int(sizes.get("size_flac") or 0)
+    lossless = max(0, int(sizes.get("size_flac") or 0))
+    variants = {}
+    for quality, key, ext, bitrate in (
+        ("mp3_128", "size_128mp3", "mp3", 128000),
+        ("mp3_320", "size_320mp3", "mp3", 320000),
+        ("lossless", "size_flac", "flac", 0),
+    ):
+        size = int(sizes.get(key) or 0)
+        if size > 0:
+            variants[quality] = {"ext": ext, "file_size": size, "bitrate": bitrate}
+    modern = sizes.get("size_new") or []
+    if modern and int(modern[0]) > 0:
+        variants["master"] = {"ext": "flac", "file_size": int(modern[0]), "bitrate": 0}
     return {"id": f"qq:{mid}", "source": "qq", "title": title,
             "artist": " / ".join(s.get("name", "") for s in row.get("singer", [])),
             "album": album.get("title") or album.get("name") or "",
             "duration_s": int(row.get("interval") or 0),
             "ext": "flac" if lossless else "mp3",
-            "file_size": lossless or int(sizes.get("size_320mp3") or sizes.get("size_128mp3") or 0),
+            "file_size": (lossless or max(0, int(sizes.get("size_320mp3") or 0))
+                          or max(0, int(sizes.get("size_128mp3") or 0))),
+            "audio_variants": variants,
             "albummid": album_mid,
             "cover_url": (f"https://y.gtimg.cn/music/photo_new/T002R500x500M000{album_mid}.jpg"
                           if re.fullmatch(r"[A-Za-z0-9]+", album_mid) else ""),

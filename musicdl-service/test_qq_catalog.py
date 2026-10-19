@@ -15,6 +15,19 @@ ROW = {"mid": "abc123", "title": "Fixture", "album": {"mid": "album123", "title"
        "singer": [{"name": "Singer"}], "interval": 200, "file": {"size_flac": 12345}}
 
 
+def test_catalog_keeps_per_quality_sizes_without_urls_or_unavailable_files():
+    item = normalize({**ROW, "file": {"size_flac": 12345, "size_128mp3": 3200,
+                                      "size_320mp3": -1, "size_new": [54321]}})
+    assert item["audio_variants"] == {
+        "mp3_128": {"ext": "mp3", "file_size": 3200, "bitrate": 128000},
+        "lossless": {"ext": "flac", "file_size": 12345, "bitrate": 0},
+        "master": {"ext": "flac", "file_size": 54321, "bitrate": 0},
+    }
+    assert item["file_size"] == 12345 and item["resolve_on_play"]
+    missing = normalize({**ROW, "file": {"size_flac": -1, "size_128mp3": -1, "size_320mp3": -1}})
+    assert missing["file_size"] == 0 and missing["ext"] == "mp3" and not missing["audio_variants"]
+
+
 class Model:
     def __init__(self, **data):
         self.data = data
@@ -303,6 +316,7 @@ async def test_explicit_quality_caches_and_refresh_pins_are_independent(native):
 async def test_quality_metadata_does_not_resolve_and_reports_selected_audio(native):
     data = await service.info(id="qq:abc123", include_lyric=False, quality="mp3_128")
     assert data["ext"] == "mp3" and not native[2]
+    assert data["audio_variants"]["lossless"]["file_size"] == 12345
     await service._resolve_qq("qq:abc123", "lossless")
     data = await service.info(id="qq:abc123", include_lyric=False, quality="lossless")
     assert data["ext"] == "flac" and data["audio_quality"] == "lossless"

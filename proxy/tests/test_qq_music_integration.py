@@ -1,4 +1,5 @@
 """Official Music integration for deferred QQ tracks."""
+from copy import deepcopy
 import httpx
 import pytest
 from fastapi.testclient import TestClient
@@ -249,3 +250,86 @@ def test_invalid_delivery_id_fails_instead_of_redirect_loop():
     guid = "online:qq:abc123:q-invented"
     assert proxy._qq_playback_redirect(playback_request(), guid, None).status_code == 400
     assert proxy._qq_delivery_guid(guid) == guid
+
+
+VARIANT_ITEM = {
+    "id": "qq:abc123", "source": "qq", "title": "Fixture", "artist": "Singer",
+    "album": "Album", "duration_s": 200, "ext": "flac", "file_size": 20000000,
+    "audio_variants": {
+        "mp3_128": {"ext": "mp3", "file_size": 3200123, "bitrate": 128000},
+        "mp3_320": {"ext": "mp3", "file_size": 8000456, "bitrate": 320000},
+        "lossless": {"ext": "flac", "file_size": 20000000, "bitrate": 0},
+    },
+}
+
+
+def test_saved_playlist_display_changes_with_quality_without_network_or_identity_changes(monkeypatch, tmp_path):
+    monkeypatch.setitem(proxy.CONF, "plt_dir", str(tmp_path / "playlists"))
+    monkeypatch.setitem(proxy.CONF, "fav_auto_bind", False)
+    guid, playlist = "online:qq:abc123", "playlist-fixture"
+    snapshot = proxy.build_favorite_track_obj(guid, deepcopy(VARIANT_ITEM), created_at=123)
+    proxy.save_playlist_tracks("user-fixture", {playlist: [{"guid": guid, "addedAt": 123, "track": snapshot}]})
+    saved = proxy.load_playlist_tracks("user-fixture")
+    official = {"guid": "local-fixture", "title": "User FLAC", "audioSpec": {"format": "flac", "size": 7654321}}
+
+    def upstream(req):
+        if req.url.path.endswith("/user/me"):
+            return httpx.Response(200, json={"code": 0, "data": {"guid": "user-fixture"}})
+        return httpx.Response(200, json={"code": 0, "data": {"list": [official], "total": 1}})
+
+    def forbidden(req):
+        pytest.fail("Rebuilding a saved playlist must not resolve or fetch every song")
+
+    proxy.app.state.upstream_client = httpx.AsyncClient(transport=httpx.MockTransport(upstream), base_url="http://unix")
+    proxy.app.state.musicdl_client = httpx.AsyncClient(transport=httpx.MockTransport(forbidden), base_url="http://musicdl")
+    with TestClient(proxy.app) as client:
+        for quality, fmt, size, bitrate in (
+            ("mp3_128", "mp3", 3200123, 128000),
+            ("mp3_320", "mp3", 8000456, 320000),
+            ("lossless", "flac", 20000000, 0),
+            ("mp3_128", "mp3", 3200123, 128000),
+        ):
+            monkeypatch.setitem(proxy.CONF, "qq_quality", quality)
+            data = client.get("/music/api/v1/track/playlist-detail/list", params={
+                "playlistGUID": playlist, "size": -1}).json()["data"]
+            assert data["total"] == 2 and data["list"][0] == official
+            online = data["list"][1]
+            assert online["guid"] == proxy.fake_official_guid(guid)
+            assert online["audioSpec"]["format"] == fmt
+            assert online["audioSpec"]["path"].endswith("." + fmt)
+            assert online["audioSpec"]["size"] == size and online["audioSpec"]["bitrate"] == bitrate
+    assert proxy.load_playlist_tracks("user-fixture") == saved
+
+
+def test_legacy_snapshot_does_not_relabel_flac_bytes_as_mp3(monkeypatch):
+    monkeypatch.setitem(proxy.CONF, "qq_quality", "mp3_128")
+    legacy = {k: v for k, v in VARIANT_ITEM.items() if k != "audio_variants"}
+    track = proxy.build_online_track(legacy)
+    assert track["audioSpec"]["format"] == "mp3" and track["audioSpec"]["bitrate"] == 128000
+    assert track["audioSpec"]["size"] == 0
+    assert legacy["ext"] == "flac" and legacy["file_size"] == 20000000
+
+
+def test_resolved_fallback_and_qualified_playback_metadata_take_precedence(monkeypatch):
+    monkeypatch.setitem(proxy.CONF, "qq_quality", "mp3_320")
+    resolved = proxy.build_online_track({**VARIANT_ITEM, "audio_quality": "mp3_128"})
+    assert resolved["audioSpec"]["bitrate"] == 128000 and resolved["audioSpec"]["size"] == 3200123
+    pinned = proxy.build_online_track({**VARIANT_ITEM, "id": "online:qq:abc123:q-lossless"})
+    assert pinned["audioSpec"]["format"] == "flac" and pinned["audioSpec"]["size"] == 20000000
+
+
+def test_snapshot_created_at_low_quality_retains_sizes_for_switching_back(monkeypatch):
+    monkeypatch.setitem(proxy.CONF, "qq_quality", "mp3_128")
+    snapshot = proxy.build_favorite_track_obj("online:qq:abc123", deepcopy(VARIANT_ITEM))
+    monkeypatch.setitem(proxy.CONF, "qq_quality", "lossless")
+    restored = proxy.build_favorite_track_obj("online:qq:abc123", proxy._snapshot_to_info(snapshot))
+    assert restored["audioSpec"]["format"] == "flac" and restored["audioSpec"]["size"] == 20000000
+
+
+@pytest.mark.parametrize("mode,fmt,size", [("high", "flac", 20000000),
+                                          ("balanced", "flac", 20000000),
+                                          ("smooth", "mp3", 3200123)])
+def test_automatic_display_follows_general_quality_preference(monkeypatch, mode, fmt, size):
+    monkeypatch.setitem(proxy.CONF, "quality_mode", mode)
+    spec = proxy.build_online_track(deepcopy(VARIANT_ITEM))["audioSpec"]
+    assert spec["format"] == fmt and spec["size"] == size
