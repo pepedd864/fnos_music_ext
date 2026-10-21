@@ -56,9 +56,19 @@ function Metrics({ m }) {
   return <Row gutter={[16, 16]} className="metrics">{[
     ['歌曲', stats.songs || 0, '首', <SoundOutlined />], ['本地文件', stats.files || 0, '份', <FileOutlined />],
     ['多版本歌曲', stats.multi || 0, '首', <SwapOutlined />], ['音乐目录', m.roots.length, '个', <FolderOpenOutlined />],
-  ].map(([title, value, unit, icon]) => <Col xs={12} xl={6} key={title}><Card><Statistic title={title} value={value} prefix={icon} suffix={<Text type="secondary" style={{ fontSize: 13 }}>{unit}</Text>} /></Card></Col>)}</Row>;
+  ].map(([title, value, unit, icon]) => <Col xs={12} md={6} key={title}><Card><Statistic title={title} value={value} prefix={icon} suffix={<Text type="secondary" style={{ fontSize: 13 }}>{unit}</Text>} /></Card></Col>)}</Row>;
 }
 function Library({ m }) {
+  const footerRef = useRef(null), [footerHeight, setFooterHeight] = useState(0);
+  useEffect(() => {
+    const footer = footerRef.current;
+    if (!footer) return;
+    const measure = () => setFooterHeight(Math.ceil(footer.getBoundingClientRect().height));
+    const observer = new ResizeObserver(measure);
+    observer.observe(footer);
+    measure();
+    return () => observer.disconnect();
+  }, [m.filter]);
   const columns = [
     { title: '歌曲 / 歌手', width: 310, render: (_, song) => <Space size={12}><Cover song={song} /><div className="song-name"><Button type="link" className="title-button" onClick={() => m.setSelected(song.id)}>{song.title}</Button><Text type="secondary" className="subline">{song.artist || '未知歌手'}</Text></div></Space> },
     { title: '专辑', dataIndex: 'album', ellipsis: true, width: 210, render: text => <Text type="secondary">{text || '—'}</Text> },
@@ -75,9 +85,9 @@ function Library({ m }) {
     {m.filter === 'trash' ? <Trash m={m} /> : <>
       <Flex gap={12} align="center" wrap style={{ marginBottom: 16 }}><Select aria-label="按音乐目录筛选" value={m.rootFilter} onChange={value => { m.setRootFilter(value); m.setPageNumber(1); }} options={[{ value: '', label: '全部音乐目录' }, ...m.roots.map(r => ({ value: r.id, label: r.path }))]} style={{ minWidth: 220 }} />
         {Boolean(m.data?.stats?.exact_copies) && <Tag>完全相同的副本 {m.data.stats.exact_copies} 份</Tag>}</Flex>
-      <Table columns={columns} rowKey="id" dataSource={m.songs} loading={m.loading} pagination={false} scroll={{ x: 950 }} className="library-table" locale={{ emptyText: <Empty description={m.roots.length ? '没有匹配的歌曲，扫描曲库后会显示音频文件' : '先添加一个音乐目录'}>{!m.roots.length && <Button type="primary" onClick={() => m.navigate('directories')}>添加音乐目录</Button>}</Empty> }} />
-      <Pagination current={m.pageNumber} pageSize={50} total={m.data?.total || 0} onChange={m.setPageNumber} showSizeChanger={false} style={{ marginTop: 20 }} />
-      <Paragraph type="secondary" className="library-note">同一录音的不同音质聚合展示；Live、伴奏等版本独立保留。</Paragraph>
+      <Table columns={columns} rowKey="id" dataSource={m.songs} loading={m.loading} pagination={false} scroll={{ x: 950 }} sticky={{ getContainer: () => m.contentRef.current, offsetScroll: footerHeight }} className="library-table" locale={{ emptyText: <Empty description={m.roots.length ? '没有匹配的歌曲，扫描曲库后会显示音频文件' : '先添加一个音乐目录'}>{!m.roots.length && <Button type="primary" onClick={() => m.navigate('directories')}>添加音乐目录</Button>}</Empty> }} />
+      <div ref={footerRef} className="library-footer"><Pagination current={m.pageNumber} pageSize={50} total={m.data?.total || 0} onChange={m.setPageNumber} showSizeChanger={false} />
+      <Paragraph type="secondary" className="library-note">同一录音的不同音质聚合展示；Live、伴奏等版本独立保留。</Paragraph></div>
     </>}
   </>;
 }
@@ -154,7 +164,7 @@ function SongDrawer({ m }) {
     <Descriptions column={1} size="small" items={[{ key: 'album', label: '专辑', children: song.album || '—' }, { key: 'duration', label: '时长', children: duration(song.duration_s) }]} />
     <div><Title level={5}>已有音质版本 <Text type="secondary">{song.files.length} 份</Text></Title><VersionFiles song={song} m={m} /></div>
     <Button icon={<CloudDownloadOutlined />} onClick={() => { m.setDiscoverQuery(`${song.title} ${song.artist}`); m.navigate('discover'); }}>查找其他音质</Button>
-    <Text type="secondary">默认版本用于此管理页。飞牛播放器中的歌曲需要通过曲库扫描更新。</Text>
+    <Text type="secondary">默认版本当前用于管理页试听，尚未同步到飞牛音乐。</Text>
   </Space>}</Drawer>;
 }
 function Trash({ m }) {
@@ -218,7 +228,8 @@ function Console() {
   const [query, setQuery] = useState(''), [rootFilter, setRootFilter] = useState(''), [pageNumber, setPageNumber] = useState(1), [data, setData] = useState(null), [platforms, setPlatforms] = useState([]), [quality, setQuality] = useState('mp3_128');
   const [error, setError] = useState(''), [platformError, setPlatformError] = useState(''), [loading, setLoading] = useState(false), [busy, setBusy] = useState('');
   const [selected, setSelected] = useState(null), [account, setAccount] = useState(null), [acquire, setAcquire] = useState(null), [convert, setConvert] = useState(null), [playing, setPlaying] = useState(null), [discoverQuery, setDiscoverQuery] = useState('');
-  const epoch = useRef(0);
+  const epoch = useRef(0), contentRef = useRef(null);
+  useEffect(() => { contentRef.current?.scrollTo({ top: 0, left: 0 }); }, [page, filter, pageNumber, query, rootFilter]);
   const load = async (quiet = false) => {
     const version = ++epoch.current;
     if (!quiet) setLoading(true);
@@ -236,16 +247,16 @@ function Console() {
   const navigate = key => { setSelected(null); setPage(['versions', 'trash'].includes(key) ? 'library' : key); setFilter(key === 'versions' ? 'multi' : key === 'trash' ? 'trash' : 'all'); setPageNumber(1); };
   const togglePlatform = async (p, value) => { setBusy(p.id); try { await api(`/api/console/platforms/${p.id}`, { enabled: value }, 'PUT'); await loadPlatforms(); message.success(value ? '平台已启用' : '平台已停用'); } catch (err) { message.error(err.message); } finally { setBusy(''); } };
   const changeQuality = async value => { try { await api('/api/config', { values: { FNMUSIC_QQ_QUALITY: value, FNMUSIC_QUALITY_MODE: value === 'mp3_128' ? 'smooth' : value === 'mp3_320' ? 'balanced' : 'high' } }, 'PUT'); setQuality(value); message.success('默认音质已更新，对之后的播放与获取生效'); } catch (err) { message.error(err.message); } };
-  const m = { page, filter, setFilter: value => { setFilter(value); setPageNumber(1); }, query, setQuery, rootFilter, setRootFilter, pageNumber, setPageNumber, data, songs: data?.songs || [], roots: data?.roots || [], trash: data?.trash || [], jobs: data?.tasks || [], platforms, quality, changeQuality, loading, busy, selected, setSelected, account, setAccount, acquire, setAcquire, convert, setConvert, playing, setPlaying, discoverQuery, setDiscoverQuery, message, navigate, mutate, togglePlatform, loadPlatforms };
+  const m = { contentRef, page, filter, setFilter: value => { setFilter(value); setPageNumber(1); }, query, setQuery, rootFilter, setRootFilter, pageNumber, setPageNumber, data, songs: data?.songs || [], roots: data?.roots || [], trash: data?.trash || [], jobs: data?.tasks || [], platforms, quality, changeQuality, loading, busy, selected, setSelected, account, setAccount, acquire, setAcquire, convert, setConvert, playing, setPlaying, discoverQuery, setDiscoverQuery, message, navigate, mutate, togglePlatform, loadPlatforms };
   const heading = headings[page] || headings.library;
   return <>
-    <Layout className="app-layout"><Sider theme="light" width={224} collapsedWidth={72} collapsed={collapsed} breakpoint="lg" onCollapse={setCollapsed} className="sidebar"><div className="brand"><Text strong style={{ fontSize: 18 }}>{collapsed ? 'fn' : 'fnMusic'}</Text></div><Menu mode="inline" selectedKeys={[page === 'library' && filter === 'multi' ? 'versions' : page === 'library' && filter === 'trash' ? 'trash' : page]} onClick={({ key }) => navigate(key)} items={[{ type: 'group', label: '工作空间', children: pages }, { type: 'group', label: '整理', children: [{ key: 'versions', icon: <SwapOutlined />, label: '多音质版本' }, { key: 'trash', icon: <DeleteOutlined />, label: '回收站' }] }]} /><div className="sidebar-foot"><Button type="text" href={BASE + '/advanced'} target="_blank" icon={<SettingOutlined />}>{!collapsed && '高级设置'}</Button></div></Sider>
-      <Layout><Header className="app-header"><Flex justify="space-between" align="center" style={{ height: '100%' }}><Space size={18}><Button type="text" aria-label="收起或展开导航" icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />} onClick={() => setCollapsed(!collapsed)} /><Breadcrumb items={[{ title: 'fnMusic' }, { title: heading[0] }]} /></Space><Button type="text" icon={<ReloadOutlined />} onClick={() => { load(); loadPlatforms(); }}>刷新</Button></Flex></Header><Content className="page-content"><Flex justify="space-between" align="center" wrap gap={16} className="page-heading"><div><Title level={2}>{heading[0]}</Title><Text type="secondary">{heading[1]}</Text></div>{['library', 'directories'].includes(page) && <Button icon={<ReloadOutlined />} disabled={!m.roots.length || pending} onClick={() => mutate({ action: 'enqueue', kind: 'scan' }, '扫描任务已加入')}>扫描曲库</Button>}</Flex>
+    <Layout className="app-layout"><Sider theme="light" width={224} collapsedWidth={72} collapsed={collapsed} breakpoint="lg" onCollapse={setCollapsed} className="sidebar"><div className="brand"><Text strong style={{ fontSize: 18 }}>{collapsed ? 'fn' : 'fnMusic'}</Text></div><div className="sidebar-nav"><Menu mode="inline" selectedKeys={[page === 'library' && filter === 'multi' ? 'versions' : page === 'library' && filter === 'trash' ? 'trash' : page]} onClick={({ key }) => navigate(key)} items={[{ type: 'group', label: '工作空间', children: pages }, { type: 'group', label: '整理', children: [{ key: 'versions', icon: <SwapOutlined />, label: '多音质版本' }, { key: 'trash', icon: <DeleteOutlined />, label: '回收站' }] }]} /></div><div className="sidebar-foot"><Button type="text" href={BASE + '/advanced'} target="_blank" aria-label="高级设置" icon={<SettingOutlined />}>{!collapsed && '高级设置'}</Button></div></Sider>
+      <Layout className="main-layout"><Header className="app-header"><Flex justify="space-between" align="center" style={{ height: '100%' }}><Space size={18}><Button type="text" aria-label="收起或展开导航" icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />} onClick={() => setCollapsed(!collapsed)} /><Breadcrumb items={[{ title: 'fnMusic' }, { title: heading[0] }]} /></Space><Button type="text" icon={<ReloadOutlined />} onClick={() => { load(); loadPlatforms(); }}>刷新</Button></Flex></Header><Content ref={contentRef} className="page-content" role="main" aria-label={heading[0]} tabIndex={0}><div className="page-inner"><Flex justify="space-between" align="center" wrap gap={16} className="page-heading"><div><Title level={2}>{heading[0]}</Title><Text type="secondary">{heading[1]}</Text></div>{['library', 'directories'].includes(page) && <Button icon={<ReloadOutlined />} disabled={!m.roots.length || pending} onClick={() => mutate({ action: 'enqueue', kind: 'scan' }, '扫描任务已加入')}>扫描曲库</Button>}</Flex>
         {error && <Alert type="error" showIcon title={error} action={<Button size="small" onClick={() => load()}>重试</Button>} style={{ marginBottom: 20 }} />}{platformError && ['platforms', 'discover'].includes(page) && <Alert type="error" title={platformError} action={<Button onClick={loadPlatforms}>重试</Button>} style={{ marginBottom: 20 }} />}
         {page === 'library' ? <>{filter !== 'trash' && <Metrics m={m} />}<Library m={m} /></> : page === 'platforms' ? <Platforms m={m} /> : page === 'discover' ? <Discover m={m} /> : page === 'tasks' ? <Tasks m={m} /> : <Directories m={m} />}
-      </Content></Layout>
-    </Layout><SongDrawer m={m} /><Account m={m} /><ProduceModal m={m} />
-    {playing && <Card className="audio-player" size="small"><Flex align="center" gap={12} wrap><Text>{playing.path.split('/').pop()}</Text><audio key={playing.id} autoPlay controls src={BASE + '/api/library/audio?id=' + encodeURIComponent(playing.id)} onError={() => message.error('无法播放此文件，请重新扫描曲库')} /><Button type="text" onClick={() => setPlaying(null)}>关闭</Button></Flex></Card>}
+      </div></Content>
+    {playing && <Card className="audio-player" size="small"><Flex align="center" gap={12} wrap><Text ellipsis className="playing-title">{playing.path.split('/').pop()}</Text><audio key={playing.id} autoPlay controls src={BASE + '/api/library/audio?id=' + encodeURIComponent(playing.id)} onError={() => message.error('无法播放此文件，请重新扫描曲库')} /><Button type="text" onClick={() => setPlaying(null)}>关闭</Button></Flex></Card>}
+      </Layout></Layout><SongDrawer m={m} /><Account m={m} /><ProduceModal m={m} />
   </>;
 }
 createRoot(document.getElementById('app')).render(<ConfigProvider locale={zhCN} theme={{ token: { colorPrimary: '#1677ff', borderRadius: 8, fontSize: 15, colorText: '#1f2329', colorTextSecondary: '#59636f', colorTextDescription: '#59636f', colorTextTertiary: '#687483', fontFamily: '-apple-system,BlinkMacSystemFont,"PingFang SC","Microsoft YaHei",sans-serif' } }}><App><Console /></App></ConfigProvider>);
