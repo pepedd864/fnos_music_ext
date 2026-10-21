@@ -45,8 +45,8 @@ async function api(path, body, method) {
 }
 const library = body => api('/api/library', body);
 
-function Cover({ size = 46 }) {
-  return <Avatar shape="square" size={size} icon={<SoundOutlined />} style={{ flexShrink: 0, background: '#dce8ed', color: '#507387' }} />;
+function Cover({ song, size = 46 }) {
+  return <Avatar shape="square" size={size} src={song?.cover_url || undefined} alt={song?.album || song?.title || '专辑封面'} icon={<SoundOutlined />} style={{ flexShrink: 0, background: '#dce8ed', color: '#507387' }} />;
 }
 function PlatformLogo({ platform, size = 44 }) {
   return <Avatar shape="square" size={size} src={platform.logo} alt={`${platform.name}图标`} style={{ background: '#fff', border: '1px solid #f0f0f0', flexShrink: 0 }} />;
@@ -60,7 +60,7 @@ function Metrics({ m }) {
 }
 function Library({ m }) {
   const columns = [
-    { title: '歌曲 / 歌手', width: 310, render: (_, song) => <Space size={12}><Cover /><div className="song-name"><Button type="link" className="title-button" onClick={() => m.setSelected(song.id)}>{song.title}</Button><Text type="secondary" className="subline">{song.artist || '未知歌手'}</Text></div></Space> },
+    { title: '歌曲 / 歌手', width: 310, render: (_, song) => <Space size={12}><Cover song={song} /><div className="song-name"><Button type="link" className="title-button" onClick={() => m.setSelected(song.id)}>{song.title}</Button><Text type="secondary" className="subline">{song.artist || '未知歌手'}</Text></div></Space> },
     { title: '专辑', dataIndex: 'album', ellipsis: true, width: 210, render: text => <Text type="secondary">{text || '—'}</Text> },
     { title: '默认版本', width: 140, render: (_, s) => preferred(s) ? <Tag color="blue">{preferred(s).format} {rate(preferred(s))}</Tag> : '—' },
     { title: '文件版本', width: 110, render: (_, s) => <Button type={s.files.length > 1 ? 'link' : 'text'} onClick={() => m.setSelected(s.id)}>{s.files.length} 个版本</Button> },
@@ -150,7 +150,7 @@ function VersionFiles({ song, m }) {
 function SongDrawer({ m }) {
   const song = m.songs.find(s => s.id === m.selected);
   return <Drawer title="歌曲详情" open={!!song} width={540} onClose={() => m.setSelected(null)} destroyOnHidden>{song && <Space direction="vertical" size={24} style={{ width: '100%' }}>
-    <Space size={18} align="start"><Cover size={82} /><div><Title level={4} style={{ margin: '0 0 8px' }}>{song.title}</Title><Text type="secondary">{song.artist || '未知歌手'}</Text></div></Space>
+    <Space size={18} align="start"><Cover song={song} size={82} /><div><Title level={4} style={{ margin: '0 0 8px' }}>{song.title}</Title><Text type="secondary">{song.artist || '未知歌手'}</Text></div></Space>
     <Descriptions column={1} size="small" items={[{ key: 'album', label: '专辑', children: song.album || '—' }, { key: 'duration', label: '时长', children: duration(song.duration_s) }]} />
     <div><Title level={5}>已有音质版本 <Text type="secondary">{song.files.length} 份</Text></Title><VersionFiles song={song} m={m} /></div>
     <Button icon={<CloudDownloadOutlined />} onClick={() => { m.setDiscoverQuery(`${song.title} ${song.artist}`); m.navigate('discover'); }}>查找其他音质</Button>
@@ -199,7 +199,7 @@ function Discover({ m }) {
   const p = m.platforms.find(p => p.id === pid);
   return <Space direction="vertical" size={20} style={{ width: '100%' }}><Flex gap={12} wrap><Select aria-label="搜索平台" value={pid} onChange={setPid} options={m.platforms.map(p => ({ value: p.id, label: p.name }))} style={{ width: 160 }} /><Input.Search aria-label="搜索平台歌曲" value={m.discoverQuery} onChange={e => m.setDiscoverQuery(e.target.value)} onSearch={() => run('search')} placeholder="歌曲、歌手或专辑" enterButton="搜索" loading={loading} style={{ width: 360, maxWidth: '100%' }} disabled={!p?.enabled} />{p?.capabilities.recommend && <Button disabled={!p.enabled || !p.auth.logged_in} loading={loading} onClick={() => run('recommend')}>我的 QQ 推荐</Button>}</Flex>
     {!p?.enabled && <Text type="secondary">请先在音乐平台页启用该平台。</Text>}{warning && <Alert type="warning" title={warning} showIcon />}
-    <Card><List loading={loading} dataSource={items} locale={{ emptyText: <Empty description="搜索歌曲，或获取账号推荐" /> }} renderItem={track => <List.Item actions={[<Button key="save" icon={<CloudDownloadOutlined />} onClick={() => m.setAcquire(track)}>保存到 NAS</Button>]}><List.Item.Meta avatar={<Cover size={42} />} title={track.title} description={`${track.artist || '未知歌手'} · ${track.album || '未知专辑'} · ${duration(track.duration_s)}`} /></List.Item>} />{hasMore && <Button disabled={loading} onClick={() => run(mode, true)}>{mode === 'recommend' ? '换一批' : '下一页'}</Button>}</Card>
+    <Card><List loading={loading} dataSource={items} locale={{ emptyText: <Empty description="搜索歌曲，或获取账号推荐" /> }} renderItem={track => <List.Item actions={[<Button key="save" icon={<CloudDownloadOutlined />} onClick={() => m.setAcquire(track)}>保存到 NAS</Button>]}><List.Item.Meta avatar={<Cover song={track} size={42} />} title={track.title} description={`${track.artist || '未知歌手'} · ${track.album || '未知专辑'} · ${duration(track.duration_s)}`} /></List.Item>} />{hasMore && <Button disabled={loading} onClick={() => run(mode, true)}>{mode === 'recommend' ? '换一批' : '下一页'}</Button>}</Card>
   </Space>;
 }
 function ProduceModal({ m }) {

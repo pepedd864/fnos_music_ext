@@ -6,6 +6,7 @@ IDs, pinned directory descriptors, identity checks and a private recovery journa
 from __future__ import annotations
 
 import contextlib
+import base64
 import hashlib
 import json
 import os
@@ -252,6 +253,9 @@ class LibraryManager:
                 song['files'] = files
                 if song['preferred'] not in [f['id'] for f in files if f['state'] == 'available']:
                     song['preferred'] = next((f['id'] for f in files if f['state'] == 'available'), None)
+                selected = next((f for f in files if f['id'] == song['preferred']), None)
+                song['cover_url'] = (f"/app/fnmusic-ext/api/library/cover?id={selected['id']}&v={selected['sha256']}"
+                                     if selected else '')
                 song['duration_s'] = song.pop('duration')
                 songs.append(song)
             trash = [self._file_view(dict(r)) for r in db.execute("SELECT f.*,r.path AS root,s.title,s.artist FROM files f JOIN roots r ON r.id=f.root_id JOIN songs s ON s.id=f.song_id WHERE state IN ('trash','moving','restoring') ORDER BY f.rowid DESC")]
@@ -267,6 +271,45 @@ class LibraryManager:
         for key in ('dev', 'ino', 'mtime', 'trash_path'):
             row.pop(key, None)
         return row
+
+    def cover(self, fid):
+        """Read embedded artwork from an indexed, identity-checked audio file.
+
+        Try another version of the same recording when the selected file has no
+        artwork. No network lookup, image rewriting or audio-file mutation.
+        """
+        from mutagen import File, MutagenError
+        with self.db() as db:
+            selected = db.execute("SELECT song_id FROM files WHERE id=? AND state='available'", (fid,)).fetchone()
+            if not selected:
+                return None
+            rows = list(db.execute("SELECT f.*,r.path AS root FROM files f JOIN roots r ON r.id=f.root_id WHERE f.song_id=? AND state='available' ORDER BY f.id!=?", (selected['song_id'], fid)))
+        for row in rows:
+            try:
+                with self._open_file(row['root'], row['relative'], row) as (fd, _, _, _):
+                    with os.fdopen(os.dup(fd), 'rb') as stream:
+                        audio = File(stream)
+                    pictures = sorted(getattr(audio, 'pictures', []), key=lambda p: p.type != 3)
+                    candidates = [p.data for p in pictures]
+                    tags = getattr(audio, 'tags', None) or {}
+                    if hasattr(tags, 'getall'):
+                        candidates.extend(p.data for p in sorted(tags.getall('APIC'), key=lambda p: p.type != 3))
+                    candidates.extend(bytes(p) for p in tags.get('covr', []))
+                    for encoded in tags.get('metadata_block_picture', []):
+                        if len(encoded) <= 7*1024*1024:
+                            from mutagen.flac import Picture
+                            candidates.append(Picture(base64.b64decode(encoded, validate=True)).data)
+                    for data in candidates:
+                        if not 0 < len(data) <= 5*1024*1024:
+                            continue
+                        mime = ('image/jpeg' if data.startswith(b'\xff\xd8\xff') else
+                                'image/png' if data.startswith(b'\x89PNG\r\n\x1a\n') else
+                                'image/webp' if data[:4] == b'RIFF' and data[8:12] == b'WEBP' else None)
+                        if mime:
+                            return data, mime
+            except (OSError, ValueError, LibraryError, MutagenError):
+                continue
+        return None
 
     def prefer(self, fid):
         with self.lock, self.db() as db:

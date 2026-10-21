@@ -1,16 +1,18 @@
 #!/usr/bin/env python3
-"""把飞牛桌面网关的 Unix socket 原样转到本机 WebUI。
+"""把飞牛桌面网关的 Unix socket 转到本机 WebUI。
 
 应用中心按 ui/config 的 gatewaySocket 连接
 <应用目录>/fnmusic-ext.sock，把 https://<主机>:<桌面端口>/app/fnmusic-ext/
 转到这个 socket。WebUI 自己监听 127.0.0.1:8774，并认识 /app/fnmusic-ext 前缀。
 
-本模块还处理两个例外端点（都只在桌面网关链路里存在，直连 8774 不经过这里，
-都要求网关注入的 X-Trim-Isadmin: true；其余请求一律原样转发，不动字节）：
+宿主接口只在桌面网关链路里存在，直连 8774 不经过这里，
+都要求网关注入的 X-Trim-Isadmin: true；其余请求只调整逐跳 Connection 头，
+每条连接仅处理一次 HTTP 请求，避免后续复用请求绕过宿主接口分派。正文不变：
 - POST /app/fnmusic-ext/api/host-file——浏览器把 NAS 上选中的 .js 源脚本路径
   发来，由宿主侧（本进程，root）代读文件内容。
 - POST /app/fnmusic-ext/api/fs-check——浏览器把储存目录（缓存/下载目录）路径
   发来，由宿主侧按真实落盘视角（root proxy）探测目录存在性与可写性。
+- /app/fnmusic-ext/api/library 及其音频接口——宿主曲库管理与文件试听。
 """
 from __future__ import annotations
 
@@ -52,7 +54,7 @@ def get_library_manager():
     return _library_manager
 
 
-def handle_library(client, headers, head_raw, audio=False):
+def handle_library(client, headers, head_raw, audio=False, cover=False):
     """Authenticated host boundary. JSON actions accept IDs, never arbitrary files."""
     try:
         if headers.get('x-trim-isadmin', '').lower() != 'true':
@@ -63,6 +65,18 @@ def handle_library(client, headers, head_raw, audio=False):
         # incorrectly comparing the public Origin to this internal Host.
         if headers.get('sec-fetch-site') == 'cross-site':
             client.sendall(_json_response(403, {'ok': False, 'error': '请从飞牛管理页执行操作'}))
+            return
+        if cover:
+            target = head_raw.split(b' ', 2)[1].decode('ascii')
+            fid = parse_qs(urlsplit(target).query).get('id', [''])[0]
+            picture = get_library_manager().cover(fid)
+            if picture is None:
+                client.sendall(_json_response(404, {'ok': False, 'error': '该歌曲没有内嵌封面'}))
+            else:
+                data, mime = picture
+                response = _http_response(200, 'OK', data, mime)
+                response = response.replace(b'Connection: close\r\n', b'Cache-Control: private, max-age=300\r\nConnection: close\r\n', 1)
+                client.sendall(response)
             return
         if audio:
             _library_audio(client, headers, head_raw)
@@ -153,6 +167,23 @@ def _relay(src: socket.socket, dst: socket.socket, prefix: bytes = b"") -> None:
                 sock.shutdown(socket.SHUT_RDWR)
             except OSError:
                 pass
+
+
+def _single_request_connection(raw: bytes) -> bytes:
+    """Close after this response: _handle dispatches only the first request.
+
+    Forwarding keep-alive would tunnel later library/fs-check/host-file calls
+    straight into the container. The upstream must close, so the desktop gateway
+    opens a fresh socket and each request passes through _handle again.
+    """
+    head, separator, body = raw.partition(b'\r\n\r\n')
+    if not separator:
+        return raw
+    lines = head.split(b'\r\n')
+    headers = [line for line in lines[1:]
+               if line.split(b':', 1)[0].strip().lower()
+               not in {b'connection', b'proxy-connection'}]
+    return b'\r\n'.join([lines[0], *headers, b'Connection: close']) + separator + body
 
 
 def _read_request_head(client: socket.socket) -> "tuple[bytes, dict[str, str]] | None":
@@ -386,6 +417,9 @@ def _handle(client: socket.socket, upstream: tuple[str, int]) -> None:
         if method == 'GET' and path in ('/api/library/audio', '/app/fnmusic-ext/api/library/audio'):
             handle_library(client, headers, head_raw, audio=True)
             return
+        if method == 'GET' and path in ('/api/library/cover', '/app/fnmusic-ext/api/library/cover'):
+            handle_library(client, headers, head_raw, cover=True)
+            return
     if _is_host_file_request(head_raw):
         handle_host_file(client, headers, head_raw)
         return
@@ -398,7 +432,7 @@ def _handle(client: socket.socket, upstream: tuple[str, int]) -> None:
     except OSError:
         client.close()
         return
-    left = threading.Thread(target=_relay, args=(client, remote, head_raw), daemon=True)
+    left = threading.Thread(target=_relay, args=(client, remote, _single_request_connection(head_raw)), daemon=True)
     right = threading.Thread(target=_relay, args=(remote, client), daemon=True)
     left.start()
     right.start()

@@ -170,3 +170,45 @@ def test_real_audio_conversion_preserves_source_and_groups_versions(manager):
     assert len(m.snapshot()['tasks']) == 0
     m._produce('convert', payload, 'b'*32)
     assert m.snapshot()['stats']['files'] == 2
+
+
+@pytest.mark.parametrize('extension', ['mp3', 'flac'])
+def test_embedded_artwork_is_read_without_changing_audio(manager, extension):
+    import io
+    import shutil
+    import subprocess
+    from PIL import Image
+    from mutagen.flac import FLAC, Picture
+    from mutagen.id3 import ID3, APIC
+    from proxy.library_manager import read_metadata
+    if not shutil.which('ffmpeg'):
+        pytest.skip('ffmpeg required')
+    m, root = manager
+    m.metadata = read_metadata
+    path = root / ('artwork.' + extension)
+    subprocess.run(['ffmpeg', '-v', 'error', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=1',
+                    '-metadata', 'title=Artwork', '-metadata', 'artist=Test', '-metadata', 'album=Test Album', str(path)], check=True)
+    image = io.BytesIO()
+    Image.new('RGB', (12, 12), '#20a080').save(image, format='PNG')
+    png = image.getvalue()
+    if extension == 'flac':
+        audio = FLAC(path)
+        picture = Picture()
+        picture.type, picture.mime, picture.data = 3, 'image/png', png
+        audio.add_picture(picture)
+        audio.save()
+    else:
+        tags = ID3(path)
+        tags.add(APIC(encoding=3, mime='image/png', type=3, data=png))
+        tags.save(path)
+    before = path.read_bytes()
+    m.scan()
+    song = m.snapshot()['songs'][0]
+    fid = song['files'][0]['id']
+    assert f'cover?id={fid}' in song['cover_url']
+    assert m.cover(fid) == (png, 'image/png')
+    assert path.read_bytes() == before
+    assert m.cover('not-an-indexed-file') is None
+    # Changing the file invalidates its old identity, rather than serving stale art.
+    path.write_bytes(b'replaced')
+    assert m.cover(fid) is None
