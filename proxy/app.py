@@ -41,6 +41,7 @@ try:
     from . import nmplaylists as nmpl
     from . import publicplaylists as pubpl
     from . import transcode as tc
+    from .roam import RoamQueues, RoamError
     from .cache_gc import purge_rolling, sweep_orphan_lyrics
     from .env_merge import parse_env_file
     from .fnlog import diag as fn_diag
@@ -51,6 +52,7 @@ except ImportError:  # uvicorn --app-dir proxy
     import nmplaylists as nmpl  # type: ignore
     import publicplaylists as pubpl  # type: ignore
     import transcode as tc  # type: ignore
+    from roam import RoamQueues, RoamError
     from cache_gc import purge_rolling, sweep_orphan_lyrics  # type: ignore
     from env_merge import parse_env_file  # type: ignore
     from fnlog import diag as fn_diag  # type: ignore
@@ -58,6 +60,7 @@ except ImportError:  # uvicorn --app-dir proxy
     from version import get_version  # type: ignore
 
 logger = logging.getLogger("fnmusic_proxy")
+QQ_ROAM = RoamQueues()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 # httpx INFO 包含完整签名 URL；播放诊断仅记录歌曲、耗时和状态。
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -191,6 +194,7 @@ CONF = {
     # 推荐双开关 / 封面补全 / .env 热重载默认开，均可被 .env 覆盖
     "quality_mode": (os.environ.get("FNMUSIC_QUALITY_MODE") or "high").strip().lower(),
     "qq_quality": (os.environ.get("FNMUSIC_QQ_QUALITY") or "auto").strip().lower(),
+    "roam_source": (os.environ.get("FNMUSIC_ROAM_SOURCE") or "local").strip().lower(),
     # App 下载档（2.8.0）：app=跟随 App 显式请求，未知/缺省一律原文件（不擅自有损
     # 转码）；original=强制原文件；standard=强制 MP3 320k（官方"标准"档语义）
     "dl_quality": (os.environ.get("FNMUSIC_DL_QUALITY") or "app").strip().lower(),
@@ -520,6 +524,7 @@ _ENV_WATCH_KEYS: dict[str, tuple[str, str]] = {
     "FNMUSIC_SEARCH_DEEP_MAX_PAGES": ("search_deep_max_pages", "deep_pages"),
     "FNMUSIC_QUALITY_MODE": ("quality_mode", "quality_mode"),
     "FNMUSIC_QQ_QUALITY": ("qq_quality", "qq_quality"),
+    "FNMUSIC_ROAM_SOURCE": ("roam_source", "roam_source"),
     "FNMUSIC_NETEASE_QUALITY": ("netease_quality", "netease_quality"),
     "FNMUSIC_DL_QUALITY": ("dl_quality", "dl_quality"),
     "FNMUSIC_TEE_SAVE_ENABLED": ("tee_save_enabled", "bool"),
@@ -590,6 +595,8 @@ def _env_watch_parse(raw: str, kind: str):
         return raw.lower() if raw.lower() in ("high", "balanced", "smooth") else None
     if kind == "qq_quality":
         return raw.lower() if raw.lower() in ("auto", "master", "lossless", "mp3_320", "mp3_128") else None
+    if kind == "roam_source":
+        return raw.lower() if raw.lower() in ("local", "qq") else None
     if kind == "dl_quality":
         return raw.lower() if raw.lower() in ("app", "original", "standard") else None
     if kind == "netease_quality":
@@ -1310,6 +1317,28 @@ def strip_source_tag(title: str) -> str:
             break
         t = stripped
     return t
+
+
+_QQ_QUALITY_TITLE_SUFFIX = re.compile(
+    r"(?: \[QQ-(?:128k|320k|高音质|平衡|流畅|母带优先|无损优先)\])+$"
+)
+
+
+def clean_track_display_titles(obj):
+    """Hide our library filename quality suffix in track titles only.
+
+    File paths and delivery IDs still distinguish quality representations. Do
+    not rename files, rewrite the official database, or strip version labels.
+    """
+    if isinstance(obj, list):
+        return [clean_track_display_titles(value) for value in obj]
+    if isinstance(obj, dict):
+        out = {key: clean_track_display_titles(value) for key, value in obj.items()}
+        if isinstance(out.get("title"), str) and any(key in out for key in
+                ("audioSpec", "artist", "artists", "artistName", "duration", "duration_s")):
+            out["title"] = _QQ_QUALITY_TITLE_SUFFIX.sub("", out["title"])
+        return out
+    return obj
 
 
 def _qq_display_audio(item: dict, guid: str) -> dict:
@@ -2563,6 +2592,25 @@ async def forward_to_upstream(request: Request, client: httpx.AsyncClient) -> Re
             logger.info("upstream forward retry (%s %s): connection-level failure",
                         request.method, request.url.path)
     resp_headers = filter_headers(resp.headers, exclude_keys={"content-length", "content-encoding"})
+    # Native local lists/history use passthrough rather than the online JSON
+    # builder. Clean their display titles here too; media/Range stays streamed.
+    if (request.url.path.startswith("/music/api/") and request.method != "HEAD"
+            and resp.status_code == 200
+            and "application/json" in resp.headers.get("content-type", "").lower()):
+        try:
+            raw = await resp.aread()
+            try:
+                payload = resp.json()
+                cleaned = clean_track_display_titles(payload)
+            except (ValueError, UnicodeError):
+                return Response(content=raw, status_code=resp.status_code, headers=resp_headers)
+            if cleaned != payload:
+                for name in ("etag", "content-md5", "digest"):
+                    resp_headers.pop(name, None)
+                return JSONResponse(content=cleaned, status_code=resp.status_code, headers=resp_headers)
+            return Response(content=raw, status_code=resp.status_code, headers=resp_headers)
+        finally:
+            await resp.aclose()
     # 上游请求强制 accept-encoding: identity，其 Content-Length 即精确字节数；原样
     # 透传可让依赖总长度的播放内核走定长帧（对齐官方直连行为）。无 body 的状态
     # 码不能带；上游无视 identity 仍压缩时长度描述的是编码体，透传必错位，弃用。
@@ -2624,6 +2672,11 @@ async def fetch_upstream_envelope(request: Request, client: httpx.AsyncClient) -
             headers=resp_headers,
             media_type=resp.headers.get("content-type"),
         )
+    cleaned = clean_track_display_titles(payload)
+    if cleaned != payload:
+        for name in ("etag", "content-md5", "digest"):
+            resp_headers.pop(name, None)
+    payload = cleaned
     payload["_ext_headers"] = resp_headers
     return payload
 
@@ -3795,6 +3848,9 @@ def disguise_client_json(obj):
                     out[k] = fake_official_guid(v)
             else:
                 out[k] = disguise_client_json(v)
+        if isinstance(out.get("title"), str) and any(key in out for key in
+                ("audioSpec", "artist", "artists", "artistName", "duration", "duration_s")):
+            out["title"] = _QQ_QUALITY_TITLE_SUFFIX.sub("", out["title"])
         return out
     if isinstance(obj, list):
         return [disguise_client_json(x) for x in obj]
@@ -4035,6 +4091,7 @@ async def lifespan(fastapi_app: FastAPI):
     try:
         yield
     finally:
+        await QQ_ROAM.close()
         await pubpl.shutdown()
         netease_tasks = _cancel_netease_resolutions()
         netease_tasks = [task for task in netease_tasks if task.get_loop() is asyncio.get_running_loop()]
@@ -4081,6 +4138,55 @@ async def lifespan(fastapi_app: FastAPI):
 
 
 app = FastAPI(title="fnmusic-ext", lifespan=lifespan)
+
+
+@app.get("/music/api/v1/track/roam-start")
+@app.get("/music/api/v1/track/roam-next")
+@app.get("/music/api/v1/track/roam-previous")
+async def qq_roam(request: Request):
+    if CONF.get("roam_source") != "qq":
+        return await forward_to_upstream(request, get_upstream_client(request.app))
+    error_headers = {"Cache-Control": "no-store"}
+    try:
+        device = request.query_params.get("deviceId", "")
+        relative = request.query_params.get("relativeRoamId", "")
+        action = request.url.path.rsplit("roam-", 1)[1]
+        if not device or len(device) > 128 or (action != "start" and not re.fullmatch(r"[0-9a-f]{32}", relative)):
+            raise RoamError("漫游请求参数无效，请重新点击漫游", 400)
+        authed, user, response = await _probe_upstream_auth(request, get_upstream_client(request.app))
+        if not authed:
+            return response or JSONResponse({"code": 401, "msg": "请先登录飞牛", "data": None}, status_code=401)
+        if not user or user == "shared":
+            raise RoamError("无法确认飞牛账号，请重新登录飞牛", 401)
+        if not CONF.get("musicdl_enabled"):
+            raise RoamError("QQ 漫游需要启用 musicdl 音乐源")
+        source = get_musicdl_client(request.app)
+        status = await source.get("/recommend/qq/session", timeout=4)
+        if status.status_code != 200:
+            raise RoamError("QQ 登录不可用，请在扩展管理页验证或重新扫码")
+        scope = status.json().get("scope")
+        if not isinstance(scope, str) or not scope:
+            raise RoamError("QQ 推荐服务暂时不可用")
+
+        async def fetch(cursor):
+            result = await source.get("/recommend/qq", params={"cursor": cursor}, timeout=10)
+            if result.status_code != 200:
+                raise RoamError("QQ 推荐暂时不可用，请稍后重试；登录过期时请到扩展管理页刷新")
+            payload = result.json()
+            if not payload.get("ok"):
+                raise RoamError("QQ 推荐返回异常，请稍后重试")
+            return payload
+
+        data = await QQ_ROAM.request((user, device), scope, action, relative, fetch, build_online_track,
+                                     owner=_credential_scope(request))
+        return JSONResponse(disguise_client_json({"code": 0, "msg": "success", "data": data}),
+                            headers=error_headers)
+    except RoamError as exc:
+        return JSONResponse({"code": exc.status, "msg": str(exc), "data": None},
+                            status_code=exc.status, headers=error_headers)
+    except (httpx.HTTPError, ValueError, TypeError, KeyError):
+        return JSONResponse({"code": 503, "msg": "QQ 推荐请求超时或暂时不可用，请稍后重试", "data": None},
+                            status_code=503, headers=error_headers)
 
 
 @app.middleware("http")
@@ -5254,9 +5360,15 @@ def _credential_scope(request: Request) -> str:
 
 def _retained_track(request: Request, guid: str) -> tuple[dict | None, dict | None]:
     guid = _qq_base_guid(guid)
+    # Bare internal Requests (e.g. lyric jobs) have no authentication context.
+    # They must not inherit a user's private roam metadata.
+    scope = _credential_scope(request) if request.scope.get("headers") else ""
+    roam_item = QQ_ROAM.retained(scope, guid) if scope else None
+    if roam_item:
+        return roam_item, None
     _clean_search_cache()
     for entry in reversed(list(_SEARCH_CACHE.values())):
-        if entry.get("credentials") != _credential_scope(request) or entry.get("config", _source_config()) != _source_config():
+        if not scope or entry.get("credentials") != scope or entry.get("config", _source_config()) != _source_config():
             continue
         for item in entry.get("items", []):
             if online_guid_from_item(item) == guid:

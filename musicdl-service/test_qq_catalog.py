@@ -37,6 +37,66 @@ class Model:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("key", ["tracks", "Tracks"])
+async def test_recommend_parses_guess_case_and_radar_without_media_resolution(tmp_path, key):
+    auth = QQAuth(tmp_path)
+    auth._save({"musicid": 123, "musickey": "synthetic"})
+    calls, closed = [], []
+    class Client:
+        def __init__(self):
+            self.recommend = self
+        async def _build_request(self, module, method, params):
+            calls.append((module, method))
+            return {key: [ROW, ROW]}
+        async def get_radar_recommend(self, page):
+            calls.append(page)
+            return types.SimpleNamespace(songs=[Model(**ROW)], has_more=True)
+        async def close(self):
+            closed.append(True)
+    catalog = QQCatalog(auth, lambda *args, **kwargs: Client())
+    first, second = await catalog.recommend(0), await catalog.recommend(1)
+    assert len(first["items"]) == 1 and first["next_cursor"] == 1
+    assert second["has_more"] and second["next_cursor"] == 2
+    assert calls == [("music.radioProxy.MbTrackRadioSvr", "get_radio_track"), 1]
+    assert len(closed) == 2 and "download_url" not in first["items"][0]
+
+
+@pytest.mark.asyncio
+async def test_recommend_requires_login_without_anonymous_fallback(tmp_path):
+    def forbidden(*args, **kwargs):
+        pytest.fail("Anonymous recommendation requests are forbidden")
+    from qq_auth import AuthError
+    with pytest.raises(AuthError):
+        await QQCatalog(QQAuth(tmp_path), forbidden).recommend()
+
+
+def test_recommend_endpoint_caches_metadata_and_invalidates_on_account_change(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+    auth = QQAuth(tmp_path)
+    auth._save({"musicid": 123, "musickey": "synthetic"})
+    monkeypatch.setattr(service, "QQ_AUTH", auth)
+    async def recommend(cursor):
+        return {"items": [normalize(ROW)], "next_cursor": cursor + 1, "has_more": True}
+    monkeypatch.setattr(service.QQ_CATALOG, "recommend", recommend)
+    with TestClient(service.app) as client:
+        first = client.get("/recommend/qq").json()
+        assert first["ok"] and first["items"][0]["id"] == "qq:abc123"
+        assert service._cache_get("qq:abc123")["item"]["audio_variants"]
+        assert client.get("/recommend/qq/session").json()["scope"] == first["scope"]
+        auth._save({"musicid": 456, "musickey": "synthetic-other"})
+        assert client.get("/recommend/qq/session").json()["scope"] != first["scope"]
+        async def changed(cursor):
+            auth._save({"musicid": 789, "musickey": "synthetic-race"})
+            return await recommend(cursor)
+        monkeypatch.setattr(service.QQ_CATALOG, "recommend", changed)
+        assert client.get("/recommend/qq").status_code == 409
+        assert client.get("/recommend/qq?cursor=-1").status_code == 422
+        import asyncio
+        asyncio.run(auth.logout())
+        assert client.get("/recommend/qq/session").status_code == 401
+
+
+@pytest.mark.asyncio
 async def test_catalog_search_only_fetches_metadata_and_passes_page(tmp_path):
     calls, closed = [], []
 

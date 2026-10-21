@@ -134,6 +134,7 @@ function applyConfigToForm() {
   const quality = v.FNMUSIC_QUALITY_MODE || "high";
   $$("input[name=quality]").forEach((el) => { el.checked = el.value === quality; });
   $("#qq-quality").value = v.FNMUSIC_QQ_QUALITY || "auto";
+  $("#roam-source").value = v.FNMUSIC_ROAM_SOURCE || "local";
   const dlQuality = v.FNMUSIC_DL_QUALITY || "app";
   $$("input[name=dl-quality]").forEach((el) => { el.checked = el.value === dlQuality; });
   $("#recommend-hot").checked = v.FNMUSIC_RECOMMEND_HOT === "true";
@@ -197,6 +198,7 @@ function collectConfig() {
     FNMUSIC_LX_ENABLED: provider === "lxmusic",
     FNMUSIC_QUALITY_MODE: ($$("input[name=quality]").find((el) => el.checked) || {}).value || "high",
     FNMUSIC_QQ_QUALITY: $("#qq-quality").value || "auto",
+    FNMUSIC_ROAM_SOURCE: $("#roam-source").value || "local",
     FNMUSIC_DL_QUALITY: ($$("input[name=dl-quality]").find((el) => el.checked) || {}).value || "app",
     FNMUSIC_RECOMMEND_HOT: $("#recommend-hot").checked,
     FNMUSIC_RECOMMEND_DAILY: $("#recommend-daily").checked,
@@ -1305,6 +1307,7 @@ if ($("#lx-name")) {
 }
 $$("input[name=quality]").forEach((el) => el.addEventListener("change", () => markDirty("音质偏好需保存后生效")));
 $("#qq-quality").addEventListener("change", () => markDirty("QQ 音质需保存后生效，下次播放使用新档位"));
+$("#roam-source").addEventListener("change", () => markDirty("保存后重新点击飞牛音乐的漫游入口"));
 $$("input[name=dl-quality]").forEach((el) => el.addEventListener("change", () => markDirty("下载音质需保存后生效")));
 ["#recommend-hot", "#recommend-daily", "#search-probe", "#search-deep", "#tee-enabled", "#fav-autobind", "#auto-cover", "#lyric-auto-dl", "#netease-my-playlists", "#netease-playlist-resident"].forEach((sel) =>
   $(sel).addEventListener("change", () => markDirty()));

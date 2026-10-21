@@ -794,6 +794,35 @@ async def healthz():
     }
 
 
+def _qq_recommend_scope():
+    if not QQ_AUTH.status()["logged_in"]:
+        raise HTTPException(401, "QQ 登录已过期，请在扩展管理页刷新或重新扫码")
+    # An opaque account epoch invalidates queues on logout, refresh or account switch.
+    import hashlib
+    return hashlib.sha256(json.dumps(QQ_AUTH.cookies(), sort_keys=True).encode()).hexdigest()
+
+
+@app.get("/recommend/qq/session")
+async def qq_recommend_session():
+    return JSONResponse({"ok": True, "scope": _qq_recommend_scope()},
+                        headers={"Cache-Control": "no-store"})
+
+
+@app.get("/recommend/qq")
+async def qq_recommend(cursor: int = Query(0, ge=0, le=1000)):
+    scope = _qq_recommend_scope()
+    try:
+        batch = await QQ_CATALOG.recommend(cursor)
+    except CatalogError as exc:
+        raise HTTPException(exc.status, str(exc)) from None
+    if scope != _qq_recommend_scope():
+        raise HTTPException(409, "QQ 登录已改变，请重新开始漫游")
+    for item in batch["items"]:
+        _cache_put(item, "", {}, "")
+    return JSONResponse({"ok": True, "scope": scope, **batch},
+                        headers={"Cache-Control": "no-store"})
+
+
 @app.get("/sources")
 async def sources():
     registered: list[str] = []

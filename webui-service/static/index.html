@@ -194,6 +194,13 @@
         </div>
         <div class="card">
           <div class="card-title">推荐</div>
+          <label class="stack" for="roam-source">漫游来源
+            <select class="input" id="roam-source">
+              <option value="local">飞牛本地曲库</option>
+              <option value="qq">QQ 音乐个性化推荐</option>
+            </select>
+          </label>
+          <p class="hint">QQ 漫游先取「猜你喜欢」，再用「雷达推荐」连续补充；需要 musicdl 音源及有效的 QQ 登录。支持上一首、下一首和会话内去重，沿用 QQ 音质设置。保存后重新点击飞牛音乐的「漫游」入口。</p>
           <label class="switch-row"><span>热门榜单推荐<div class="sub">独立「热门推荐」歌单：热歌榜/飙升榜原味</div></span><input type="checkbox" id="recommend-hot"></label>
           <label class="switch-row"><span>每日推荐<div class="sub">独立「每日推荐」歌单；其他音源在配置大模型后生效</div></span><input type="checkbox" id="recommend-daily"></label>
           <label class="switch-row"><span>公共歌单<div class="sub">浏览并勾选网易/洛雪的原生推荐、分类歌单和榜单；勾选后作为独立只读歌单显示。musicdl 没有统一的推荐歌单发现接口。</div></span><input type="checkbox" id="public-playlists-enabled"></label>

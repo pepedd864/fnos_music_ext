@@ -90,10 +90,11 @@ class QQCatalog:
         # all the slow searches. Queue time is inside each deadline.
         self.search_slots = asyncio.Semaphore(2)
         self.play_slots = asyncio.Semaphore(4)
+        self.recommend_slots = asyncio.Semaphore(1)
 
-    async def _call(self, operation, *, metadata=False, timeout=8):
+    async def _call(self, operation, *, metadata=False, timeout=8, lane=None):
         async def run():
-            async with self.search_slots if metadata else self.play_slots:
+            async with (lane or (self.search_slots if metadata else self.play_slots)):
                 client = None
                 try:
                     client = self.factory(self.auth, metadata=metadata)
@@ -118,6 +119,33 @@ class QQCatalog:
             data = result.model_dump(by_alias=True)
             return [item for row in data.get("song", []) if (item := normalize(row))]
         return await self._call(query, metadata=True)
+
+    async def recommend(self, cursor=0):
+        if not self.auth.status()["logged_in"]:
+            raise AuthError("QQ 登录已过期，请在扩展管理页刷新或重新扫码")
+
+        async def query(client):
+            if cursor == 0:
+                # SDK 0.5.3 expects `Tracks`, but QQ currently returns `tracks`.
+                # Parse the original metadata payload instead of silently losing it.
+                raw = await client.recommend._build_request(
+                    "music.radioProxy.MbTrackRadioSvr", "get_radio_track",
+                    {"id": 99, "num": 5, "from": 0, "scene": 0, "song_ids": []})
+                rows = raw.get("tracks", raw.get("Tracks", []))
+                more = True
+            else:
+                result = await client.recommend.get_radar_recommend(page=cursor)
+                rows = [song.model_dump(by_alias=True) for song in result.songs]
+                more = result.has_more
+            seen, items = set(), []
+            for row in rows[:100]:
+                item = normalize(row)
+                if item and item["id"] not in seen:
+                    seen.add(item["id"])
+                    items.append(item)
+            return {"items": items, "next_cursor": cursor + 1, "has_more": bool(more)}
+
+        return await self._call(query, lane=self.recommend_slots)
 
     async def info(self, song_id):
         mid = self.mid(song_id)
