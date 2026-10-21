@@ -1,0 +1,17 @@
+{
+  "name": "fnmusic-console",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs"
+  },
+  "dependencies": {
+    "@ant-design/icons": "^6.0.0",
+    "antd": "6.6.7",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0"
+  }
+}

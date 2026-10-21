@@ -22,6 +22,7 @@ import sys
 import threading
 import uuid
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 UPSTREAM = ("127.0.0.1", 8774)
 SOCK_NAME = "fnmusic-ext.sock"
@@ -36,6 +37,93 @@ HOST_FILE_MAX_BODY = 1 << 20          # 请求体上限 1MB（只装一个路径
 HOST_FILE_MAX_BYTES = 9_000_000       # 与 lxmusic SCRIPT_MAX_BYTES 对齐
 FS_CHECK_PATHS = ("/app/fnmusic-ext/api/fs-check", "/api/fs-check")
 FS_CHECK_MAX_BODY = 1 << 20           # 同 host-file：只装一个路径字符串
+LIBRARY_DIR = Path(__file__).resolve().parent.parent / 'sources-data' / 'console-library'
+_library_manager = None
+_library_lock = threading.Lock()
+
+
+def get_library_manager():
+    global _library_manager
+    with _library_lock:
+        if _library_manager is None:
+            sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+            from proxy.library_manager import LibraryManager
+            _library_manager = LibraryManager(LIBRARY_DIR)
+    return _library_manager
+
+
+def handle_library(client, headers, head_raw, audio=False):
+    """Authenticated host boundary. JSON actions accept IDs, never arbitrary files."""
+    try:
+        if headers.get('x-trim-isadmin', '').lower() != 'true':
+            client.sendall(_json_response(403, {'ok': False, 'error': '仅管理员可管理曲库'}))
+            return
+        # fnOS rewrites Host to the local upstream. Browser fetch metadata plus
+        # mandatory application/json (CORS preflight) protect mutations without
+        # incorrectly comparing the public Origin to this internal Host.
+        if headers.get('sec-fetch-site') == 'cross-site':
+            client.sendall(_json_response(403, {'ok': False, 'error': '请从飞牛管理页执行操作'}))
+            return
+        if audio:
+            _library_audio(client, headers, head_raw)
+            return
+        if headers.get('transfer-encoding') or not headers.get('content-type', '').startswith('application/json'):
+            client.sendall(_json_response(400, {'ok': False, 'error': '请求必须是 JSON'}))
+            return
+        body = _read_full_body(client, headers, head_raw, 16384)
+        if body is None:
+            raise ValueError('请求过大或格式错误')
+        req = json.loads(body)
+        if not isinstance(req, dict):
+            raise ValueError('请求必须为对象')
+        result = get_library_manager().dispatch(req)
+        client.sendall(_json_response(200, {'ok': True, **result}))
+    except (ValueError, FileNotFoundError, NotADirectoryError) as exc:
+        client.sendall(_json_response(400, {'ok': False, 'error': str(exc)[:500] if isinstance(exc, ValueError) else '目录或文件不存在，请重新扫描'}))
+    except Exception:
+        # Do not leak absolute credential locations, SQL or source URLs.
+        client.sendall(_json_response(500, {'ok': False, 'error': '曲库操作未完成，请检查目录权限与可用空间'}))
+    finally:
+        client.close()
+
+
+def _library_audio(client, headers, head_raw):
+    manager = get_library_manager()
+    target = head_raw.split(b' ', 2)[1].decode('ascii')
+    fid = parse_qs(urlsplit(target).query).get('id', [''])[0]
+    with manager.db() as db:
+        row = db.execute("SELECT f.*,r.path AS root FROM files f JOIN roots r ON r.id=f.root_id WHERE f.id=? AND f.state='available'", (fid,)).fetchone()
+    if not row:
+        client.sendall(_json_response(404, {'ok': False, 'error': '文件不可用'}))
+        return
+    with manager._open_file(row['root'], row['relative'], row) as (fd, st, _, _):
+        start, end, code = 0, st.st_size-1, 200
+        if headers.get('range'):
+            import re
+            match = re.fullmatch(r'bytes=(\d*)-(\d*)', headers['range'])
+            if not match or not any(match.groups()):
+                client.sendall(b'HTTP/1.1 416 Range Not Satisfiable\r\nContent-Length: 0\r\nConnection: close\r\n\r\n')
+                return
+            left, right = match.groups()
+            if left:
+                start, end = int(left), min(int(right), end) if right else end
+            else:
+                start = max(0, st.st_size-int(right))
+            if start > end or start >= st.st_size:
+                client.sendall(f'HTTP/1.1 416 Range Not Satisfiable\r\nContent-Range: bytes */{st.st_size}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n'.encode())
+                return
+            code = 206
+        mime = {'MP3': 'audio/mpeg', 'FLAC': 'audio/flac', 'M4A': 'audio/mp4', 'WAV': 'audio/wav'}.get(row['format'], 'application/octet-stream')
+        extra = f'Content-Range: bytes {start}-{end}/{st.st_size}\r\n' if code == 206 else ''
+        client.sendall((f'HTTP/1.1 {code} OK\r\nContent-Type: {mime}\r\nContent-Length: {end-start+1}\r\nAccept-Ranges: bytes\r\nCache-Control: no-store\r\n{extra}Connection: close\r\n\r\n').encode())
+        os.lseek(fd, start, os.SEEK_SET)
+        remaining = end-start+1
+        while remaining:
+            chunk = os.read(fd, min(65536, remaining))
+            if not chunk:
+                break
+            client.sendall(chunk)
+            remaining -= len(chunk)
 
 
 def socket_path_for(base: Path) -> Path:
@@ -288,6 +376,16 @@ def _handle(client: socket.socket, upstream: tuple[str, int]) -> None:
         client.close()
         return
     head_raw, headers = head
+    request_line = head_raw.split(b'\r\n', 1)[0].decode('latin-1').split()
+    if len(request_line) >= 2:
+        method, target = request_line[:2]
+        path = urlsplit(target).path
+        if method == 'POST' and path in ('/api/library', '/app/fnmusic-ext/api/library'):
+            handle_library(client, headers, head_raw)
+            return
+        if method == 'GET' and path in ('/api/library/audio', '/app/fnmusic-ext/api/library/audio'):
+            handle_library(client, headers, head_raw, audio=True)
+            return
     if _is_host_file_request(head_raw):
         handle_host_file(client, headers, head_raw)
         return

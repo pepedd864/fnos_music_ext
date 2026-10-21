@@ -1,0 +1,29 @@
+[
+  {
+    "file": "qq.jpg",
+    "bundleId": "com.tencent.QQMusic",
+    "publisher": "Tencent Technology (Shenzhen) Company Limited",
+    "name": "QQ音乐 - 听我想听",
+    "appStore": "https://apps.apple.com/cn/app/qq%E9%9F%B3%E4%B9%90-%E5%90%AC%E6%88%91%E6%83%B3%E5%90%AC/id414603431?uo=4",
+    "asset": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/ed/c3/8f/edc38f10-2f7c-779e-c407-7b228e600312/AppIcon-0-0-1x_U007ephone-0-1-0-sRGB-85-220.png/512x512bb.jpg",
+    "bytes": 30502
+  },
+  {
+    "file": "kugou.jpg",
+    "bundleId": "com.kugou.kugou1002",
+    "publisher": "Guangzhou KuGou Technology CO. , LTD",
+    "name": "酷狗音乐 - 就是歌多",
+    "appStore": "https://apps.apple.com/cn/app/%E9%85%B7%E7%8B%97%E9%9F%B3%E4%B9%90-%E5%B0%B1%E6%98%AF%E6%AD%8C%E5%A4%9A/id472208016?uo=4",
+    "asset": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/ad/3a/d4/ad3ad455-06c1-eaa5-7c47-a99169cb599d/AppIcon-0-0-1x_U007epad-0-1-85-220.png/512x512bb.jpg",
+    "bytes": 33367
+  },
+  {
+    "file": "kuwo.jpg",
+    "bundleId": "com.yeelion.kwplayer",
+    "publisher": "Kuwo Tianjin Co., Ltd.",
+    "name": "酷我音乐-好音质用酷我",
+    "appStore": "https://apps.apple.com/cn/app/%E9%85%B7%E6%88%91%E9%9F%B3%E4%B9%90-%E5%A5%BD%E9%9F%B3%E8%B4%A8%E7%94%A8%E9%85%B7%E6%88%91/id588673713?uo=4",
+    "asset": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/fd/e6/e5/fde6e5b6-8ccd-9c86-e166-2da72d37ef3b/AppIcon-1x_U007emarketing-0-7-0-0-sRGB-85-220-0.png/512x512bb.jpg",
+    "bytes": 34099
+  }
+]

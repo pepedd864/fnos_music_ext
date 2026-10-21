@@ -146,7 +146,7 @@ RUN set -eu; \
 COPY --chown=appuser:appuser musicdl-service/app.py musicdl-service/hardening.py musicdl-service/qq_auth.py musicdl-service/qq_catalog.py /srv/musicdl-service/
 COPY --chown=appuser:appuser musicbox-service/app.py musicbox-service/runner.py musicbox-service/netease_ext.py musicbox-service/playback.py /srv/musicbox-service/
 COPY --chown=appuser:appuser lxmusic-service/app.py lxmusic-service/lxserver_client.py lxmusic-service/verify_source.py /srv/lxmusic-service/
-COPY --chown=appuser:appuser webui-service/app.py /srv/webui-service/
+COPY --chown=appuser:appuser webui-service/app.py webui-service/console_api.py /srv/webui-service/
 COPY --chown=appuser:appuser webui-service/static/ /srv/webui-service/static/
 # webui/lxmusic/musicbox 复用 proxy 模块（.env 安全合并 + 统一日志 fnlog），必须随镜像分发
 COPY --chown=appuser:appuser proxy/__init__.py proxy/env_merge.py proxy/fnlog.py proxy/publicplaylists.py proxy/version.py /srv/proxy/

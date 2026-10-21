@@ -316,3 +316,35 @@ def test_fs_check_only_post_intercepted(tmp_path: Path):
     data = _request(sock_path, b"GET /app/fnmusic-ext/api/fs-check HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
     upstream.shutdown()
     assert b"/app/fnmusic-ext/api/fs-check" in data
+
+
+def test_library_gateway_admin_json_actions_and_audio_range(tmp_path, monkeypatch):
+    from proxy.library_manager import LibraryManager
+    root = tmp_path / 'music'
+    root.mkdir()
+    (root / 'test.mp3').write_bytes(b'abcdefghij')
+    def meta(fd, path):
+        return {'title': 'Song', 'artist': 'Artist', 'album': 'Album', 'duration_s': 3,
+                'format': 'MP3', 'bitrate': 128000, 'sample_rate': 44100}
+    manager = LibraryManager(tmp_path / 'index', metadata=meta)
+    monkeypatch.setattr(_MOD, '_library_manager', manager)
+    sock_path = _start_gateway(tmp_path, 1)
+    def post(body, admin=True, origin='http://localhost'):
+        encoded = json.dumps(body).encode()
+        site = 'cross-site' if origin == 'https://other.example' else 'same-origin'
+        return _request(sock_path, (f'POST /app/fnmusic-ext/api/library HTTP/1.1\r\nHost: localhost\r\nOrigin: {origin}\r\nSec-Fetch-Site: {site}\r\nContent-Type: application/json\r\nX-Trim-Isadmin: {str(admin).lower()}\r\nContent-Length: {len(encoded)}\r\n\r\n').encode() + encoded)
+    assert b'403' in post({'action': 'list'}, admin=False).split(b'\r\n')[0]
+    assert b'403' in post({'action': 'list'}, origin='https://other.example').split(b'\r\n')[0]
+    assert b'200' in post({'action': 'list'}, origin='http://192.168.0.100:5666').split(b'\r\n')[0]
+    assert b'200' in post({'action': 'add_root', 'path': str(root)}).split(b'\r\n')[0]
+    manager.scan()
+    data = json.loads(post({'action': 'list'}).split(b'\r\n\r\n', 1)[1])
+    fid = data['songs'][0]['files'][0]['id']
+    raw = _request(sock_path, f'GET /app/fnmusic-ext/api/library/audio?id={fid} HTTP/1.1\r\nHost: localhost\r\nX-Trim-Isadmin: true\r\nRange: bytes=2-5\r\n\r\n'.encode())
+    assert b'206' in raw.split(b'\r\n')[0]
+    assert raw.split(b'\r\n\r\n', 1)[1] == b'cdef'
+    assert b'Content-Range: bytes 2-5/10' in raw
+    assert b'200' in post({'action': 'trash', 'id': fid}).split(b'\r\n')[0]
+    assert not (root / 'test.mp3').exists()
+    assert b'200' in post({'action': 'restore', 'id': fid}).split(b'\r\n')[0]
+    assert (root / 'test.mp3').read_bytes() == b'abcdefghij'

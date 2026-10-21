@@ -9,6 +9,22 @@ permissions:
   contents: read
 
 jobs:
+  console:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Build bundled console and check committed assets
+        working-directory: webui-service/console
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.25.0 --activate
+          pnpm install --frozen-lockfile
+          pnpm build
+          git diff --exit-code -- ../static/console/
+
   test:
     runs-on: ubuntu-latest
     strategy:

@@ -1033,7 +1033,8 @@ def test_index_served():
         # 桌面网关把整段 /app/fnmusic-ext 前缀转到这里
         via_desktop = client.get("/app/fnmusic-ext/")
         assert via_desktop.status_code == 200
-        assert "/app/fnmusic-ext/static/app.js" in via_desktop.text
+        assert "/app/fnmusic-ext/static/console/app.js" in via_desktop.text
+        assert client.get('/advanced').status_code == 200
         assert client.get("/app/fnmusic-ext/static/icon.png").status_code == 200
 
 
@@ -1749,7 +1750,7 @@ def test_about_requires_admin(about_env):
 def test_html_and_static_served_with_no_cache(about_env):
     """升级后 WebView 不得沿用旧页面：HTML/静态资源必须带 no-cache（协商缓存）。"""
     (about_env / "static" / "app.js").write_text("// js", encoding="utf-8")
-    (about_env / "static" / "index.html").write_text("<html></html>", encoding="utf-8")
+    (about_env / "static" / "console.html").write_text("<html></html>", encoding="utf-8")
     with TestClient(webui.app) as client:
         assert client.get("/").headers["cache-control"] == "no-cache"
         assert client.get("/static/app.js").headers["cache-control"] == "no-cache"
@@ -2235,3 +2236,41 @@ def test_hidden_toggled_elements_not_defeated_by_display():
                 f"#{el_id} 靠 hidden 属性切换，但 .{cls} 的 display 声明会压过 UA 的 "
                 f"[hidden] 规则导致常显——需补 .{cls}[hidden] 或 #{el_id}[hidden] "
                 f"{{ display: none; }} 兜底")
+
+
+def test_console_platform_registry_masks_auth_and_saves_enable_without_restart(env_file, svctl):
+    with authed_client() as client:
+        _mock_http(lambda request: httpx.Response(200, json={'state': 'stored', 'logged_in': True, 'account': '****1234', 'musickey': 'must-not-forward'}))
+        response = client.get('/api/console/platforms')
+        assert response.headers['cache-control'] == 'no-store'
+        platforms = response.json()['items']
+        assert [p['id'] for p in platforms] == ['qq', 'kugou', 'kuwo']
+        assert platforms[0]['status'] == '已登录'
+        assert platforms[1]['status'] == '待登录'
+        assert not platforms[1]['capabilities']['login']
+        assert 'must-not-forward' not in response.text
+        assert client.put('/api/console/platforms/qq', json={'enabled': True}).status_code == 200
+        assert 'QQMusicClient' in webui.read_env()['FNMUSIC_ONLINE_SOURCES']
+        assert client.put('/api/console/platforms/qq', json={'enabled': False}).status_code == 200
+        assert 'QQMusicClient' not in webui.read_env()['FNMUSIC_ONLINE_SOURCES']
+    assert not any(c[0] in {'restart', 'stop', 'start'} for c in svctl.calls)
+
+
+def test_console_search_respects_enable_and_never_leaks_direct_url(env_file):
+    def handler(request):
+        assert request.url.path == '/search'
+        assert request.url.params['sources'] == 'KuwoMusicClient'
+        return httpx.Response(200, json={'items': [{'id': 'kuwo:123', 'title': 'Title', 'artist': 'Artist', 'download_url': 'SECRET', 'download_headers': {'Cookie': 'SECRET'}}], 'errors': {}})
+    with authed_client() as client:
+        _mock_http(handler)
+        assert client.get('/api/console/platforms/qq/search?q=abc').status_code == 409
+        result = client.get('/api/console/platforms/kuwo/search?q=abc')
+        assert result.status_code == 200
+        assert result.json()['items'][0]['id'] == 'kuwo:123'
+        assert 'SECRET' not in result.text
+        assert client.get('/api/console/platforms/kuwo/recommend').status_code == 501
+        assert client.get('/api/console/platforms/kuwo/search?q=abc&page=-1').status_code == 400
+        assert client.post('/api/library', json={'action': 'list'}).status_code == 501
+    with TestClient(webui.app) as client:
+        assert client.get('/api/console/platforms').status_code == 403
+        assert client.post('/api/library', json={'action': 'list'}).status_code == 403

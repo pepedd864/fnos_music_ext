@@ -1684,9 +1684,18 @@ async def api_logs_export():
 
 # ------------------------------------------------------------------ 静态前端 --
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from console_api import install_console_api  # noqa: E402
+install_console_api(app, sys.modules[__name__])
+
+
+@app.get('/advanced')
+async def advanced_index():
+    return FileResponse(STATIC_DIR / 'index.html')
+
 @app.get("/")
 async def index():
-    return FileResponse(STATIC_DIR / "index.html")
+    return FileResponse(STATIC_DIR / "console.html")
 
 
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")

@@ -18,3 +18,6 @@ proxy/*
 **/.pytest_cache/
 **/test_*.py
 **/*.md
+**/node_modules/
+webui-service/prototype-console/
+webui-service/console/
