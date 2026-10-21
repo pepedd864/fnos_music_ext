@@ -1,8 +1,8 @@
 # fnMusic console
 
-React + Ant Design 管理页，默认使用已确认的 A 布局。所有列表与操作调用真实 API，无运行时 CDN 或示例数据。已有的引擎、公共歌单和诊断设置保留在 `/advanced`。
+React + Ant Design 是唯一管理页，使用已确认的 A 布局。所有列表与操作调用真实 API，无运行时 CDN 或示例数据。引擎、公共歌单、储存、搜索、大模型、运行状态和诊断已全部迁入侧栏；旧 `/advanced` 书签跳转到新设置页，旧前端代码已移除。
 
-构建：`pnpm install --frozen-lockfile && pnpm build`。产物写入 `../static/console/` 并随仓库分发，NAS 安装与镜像构建无需 Node 包管理器。
+验证和构建：`pnpm install --frozen-lockfile && pnpm test && pnpm build`。产物写入 `../static/console/` 并随仓库分发，NAS 安装与镜像构建无需 Node 包管理器。
 
 - `/api/console/platforms`：平台注册表、脱敏账号状态、启用状态。
 - `/api/console/platforms/:id/search`：按平台搜索。

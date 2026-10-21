@@ -22,6 +22,7 @@ jobs:
           corepack enable
           corepack prepare pnpm@11.25.0 --activate
           pnpm install --frozen-lockfile
+          pnpm test
           pnpm build
           git diff --exit-code -- ../static/console/
 

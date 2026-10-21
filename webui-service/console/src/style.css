@@ -1,6 +1,5 @@
 html, body, #app, #app > .ant-app { height: 100%; min-height: 0; }
 body { margin: 0; overflow: hidden; background: #f5f5f5; }
-.demo-banner { position: sticky; top: 0; z-index: 10; text-align: center; }
 .app-layout { height: 100vh; height: 100dvh; min-height: 0; overflow: hidden; }
 .main-layout { min-width: 0; min-height: 0; }
 .brand { height: 64px; display: flex; align-items: center; padding: 0 22px; flex-shrink: 0; white-space: nowrap; }
@@ -10,17 +9,14 @@ body { margin: 0; overflow: hidden; background: #f5f5f5; }
 .sidebar .ant-menu { border-inline-end: 0 !important; padding: 6px 8px; }
 .sidebar-foot { flex-shrink: 0; margin: 0 12px 16px; padding-top: 12px; border-top: 1px solid #f0f0f0; font-size: 13px; }
 .app-header { background: #fff; padding: 0 28px; border-bottom: 1px solid #f0f0f0; height: 64px; flex-shrink: 0; }
-.page-inner, .platform-workspace, .recording-workspace { padding: 30px 32px 24px; width: 100%; }
-.page-inner { min-height: 100%; }
+.page-inner { min-height: 100%; padding: 30px 32px 24px; width: 100%; }
 .page-content { min-height: 0; padding: 0; overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
 .page-content:focus-visible { outline: 2px solid #1677ff; outline-offset: -2px; }
-.platform-workspace { max-width: 1520px; align-self: center; }
 .page-heading { margin-bottom: 26px; }
 .page-heading h2 { margin: 0 0 8px; }
 .metrics { margin-bottom: 24px; }
 .metrics .ant-statistic-content { margin: 8px 0; }
 .metrics .ant-statistic-content-prefix { color: #8c8c8c; font-size: 18px; margin-right: 12px; }
-.metric-note { display: block; font-size: 13px; }
 .library-toolbar { margin-bottom: 16px; }
 .library-toolbar .ant-tabs-nav { margin: 0; }
 .song-search { width: 270px; }
@@ -37,39 +33,15 @@ body { margin: 0; overflow: hidden; background: #f5f5f5; }
 .preferred-file { border-color: #91caff; background: #f0f7ff; }
 .file-meta { font-size: 13px; margin: 16px 0; }
 .file-card .ant-badge-status-text { font-size: 13px; color: #59636f; }
-.top-header { background: white; border-bottom: 1px solid #f0f0f0; display: flex; gap: 24px; align-items: center; padding: 0 24px; height: 76px; }
-.top-header .brand { padding: 0; }
-.top-menu { flex: 1; min-width: 0; border-bottom: 0; }
-.platform-hero { background: linear-gradient(115deg, #f0f7ff, #fff); }
-.recording-list { background: #fafafa; border-right: 1px solid #f0f0f0; padding: 12px; }
-.recording-list .ant-list-item { padding: 5px 0; border: 0; }
-.recording-selected { background: #e6f4ff; border-radius: 8px; }
-.recording-button { height: auto; padding: 14px 10px; text-align: left; white-space: normal; }
-.recording-button .ant-typography { white-space: normal; }
-.recording-detail { padding: 34px 30px; }
-.recording-versions { border-left: 1px solid #f0f0f0; padding: 26px 22px; }
-.recording-detail .ant-space-item { max-width: 100%; }
-.center { text-align: center; }
-.variant-switcher { position: fixed; bottom: 22px; left: 50%; transform: translateX(-50%); z-index: 1200; box-shadow: 0 8px 32px #00000015; white-space: nowrap; }
 @media (max-width: 1100px) {
-  .page-inner, .platform-workspace, .recording-workspace { padding: 24px 20px; }
+  .page-inner { padding: 24px 20px; }
   .song-search { width: 240px; }
-  .recording-versions { padding: 22px 16px; }
 }
 @media (max-width: 760px) {
-  .top-header { padding: 0 16px; gap: 12px; flex-wrap: wrap; height: auto; min-height: 70px; }
-  .top-header .brand { padding: 14px 0; }
-  .top-menu { order: 3; flex-basis: 100%; }
-  .page-inner, .platform-workspace, .recording-workspace { padding: 22px 14px 24px; }
+  .page-inner { padding: 22px 14px 24px; }
   .app-header { padding: 0 12px; }
   .app-header .ant-breadcrumb { display: none; }
   .library-toolbar .ant-tabs, .song-search { width: 100%; }
-  .recording-list { border-right: 0; }
-  .recording-versions { border-left: 0; border-top: 1px solid #f0f0f0; }
-  .variant-switcher .ant-segmented-item-label { font-size: 13px; padding-inline: 6px; }
-  .variant-switcher .ant-space { gap: 4px !important; }
-  .variant-switcher .ant-card-body { padding: 6px !important; }
-  .demo-banner { font-size: 13px; }
 }
 .file-path { font-size: 13px; overflow-wrap: anywhere; margin-bottom: 16px; }
 .audio-player { flex-shrink: 0; margin: 0; border-radius: 0; border-width: 1px 0 0; box-shadow: 0 -4px 20px #00000008; }
@@ -79,4 +51,16 @@ body { margin: 0; overflow: hidden; background: #f5f5f5; }
   .metrics .ant-card-body { padding: 14px 18px; }
   .metrics .ant-statistic-content { margin: 4px 0; }
   .page-heading { margin-bottom: 20px; }
+}
+
+.settings-stack { width: 100%; max-width: 1200px; }
+.settings-save { flex-shrink: 0; padding: 16px 32px; background: #fff; border-top: 1px solid #f0f0f0; box-shadow: 0 -4px 16px #00000005; }
+.diagnostic-text { white-space: pre-wrap; overflow-wrap: anywhere; margin-top: 16px; }
+.public-browser { padding-top: 20px; border-top: 1px solid #f0f0f0; }
+.settings-stack .ant-list-item-meta { min-width: 0; }
+.settings-stack .ant-list-item-meta-title { overflow-wrap: anywhere; }
+@media (max-width: 760px) {
+  .settings-save { padding: 12px 14px; }
+  .settings-stack .ant-list-item { flex-wrap: wrap; gap: 12px; }
+  .settings-stack .ant-list-item-action { margin-inline-start: 0; }
 }

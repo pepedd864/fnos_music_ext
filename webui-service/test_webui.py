@@ -920,7 +920,7 @@ def test_public_playlist_proxy_routes_and_strips_provider(env_file, monkeypatch)
     assert key == ("musicbox", "", (("channel", "charts"),))
 
 # musicbox CLI（auth ... --json）的真实输出契约：{ok, data:{...}} 信封结构。
-# 前端 static/app.js pollQr/checkQrStatus 与 netease_login.sh 均按此解析（code 在 data 里），
+# 新控制台 neteaseCode 与 netease_login.sh 均按此解析（code 在 data 里），
 # 与 proxy/tests/test_musicbox_service.py 的 CLI mock 保持一致。
 NETEASE_LOGIN_ENVELOPE = {"ok": True, "data": {"unikey": "KEY1", "qr_ascii": "QR",
                                                "qr_url": "https://music.163.com/login?codekey=KEY1"}}
@@ -948,7 +948,7 @@ def test_netease_auth_proxy_passthrough(env_file, monkeypatch):
         r = client.post("/api/netease/auth/login")
         assert r.status_code == 200 and r.json()["data"]["unikey"] == "KEY1"
         r2 = client.get("/api/netease/auth/login/check", params={"unikey": "KEY1"})
-        # 信封结构原样透传：code 必须在 data 里（前端据此解析，回归见 test_app_js.py）
+        # 信封结构原样透传：code 必须在 data 里（前端据此解析，回归见 test_console_frontend.py）
         assert r2.status_code == 200 and r2.json()["data"]["code"] == 801
         assert hits["/api/v1/auth/login/check"]["unikey"] == "KEY1"  # 查询串透传
         r4 = client.get("/api/netease/auth/status")
@@ -1034,7 +1034,16 @@ def test_index_served():
         via_desktop = client.get("/app/fnmusic-ext/")
         assert via_desktop.status_code == 200
         assert "/app/fnmusic-ext/static/console/app.js" in via_desktop.text
-        assert client.get('/advanced').status_code == 200
+        for path in ('/advanced', '/app/fnmusic-ext/advanced'):
+            redirect = client.get(path, follow_redirects=False)
+            assert redirect.status_code == 307
+            assert redirect.headers['location'] == './?page=storage-settings'
+            migrated = client.get(path)
+            assert migrated.status_code == 200
+            assert '/static/console/app.js' in migrated.text
+            assert migrated.url.params['page'] == 'storage-settings'
+        for filename in ('index.html', 'app.js', 'style.css'):
+            assert client.get('/static/' + filename).status_code == 404
         assert client.get("/app/fnmusic-ext/static/icon.png").status_code == 200
 
 
@@ -1218,13 +1227,6 @@ def test_public_playlist_selection_rejects_invalid_payload(env_file, svctl):
         assert saved.status_code == 400
         assert "公共歌单" in saved.json()["error"]
 
-
-def test_public_playlist_save_contract_strips_display_only_fields():
-    """管理页内部可保留展示字段，但写入配置必须只保存稳定身份四字段。"""
-    js = (HERE / "static" / "app.js").read_text(encoding="utf-8")
-    needle = "publicSelection.map(({ provider, source, kind, id }) => ({ provider, source, kind, id }))"
-    assert needle in js
-    assert "_name: item.name" in js and "_cover_url: item.cover_url" in js
 
 
 def test_resident_disable_stops_musicbox_for_memory(env_file, svctl, resident_state):
@@ -1749,11 +1751,12 @@ def test_about_requires_admin(about_env):
 
 def test_html_and_static_served_with_no_cache(about_env):
     """升级后 WebView 不得沿用旧页面：HTML/静态资源必须带 no-cache（协商缓存）。"""
-    (about_env / "static" / "app.js").write_text("// js", encoding="utf-8")
+    (about_env / "static" / "console").mkdir()
+    (about_env / "static" / "console" / "app.js").write_text("// js", encoding="utf-8")
     (about_env / "static" / "console.html").write_text("<html></html>", encoding="utf-8")
     with TestClient(webui.app) as client:
         assert client.get("/").headers["cache-control"] == "no-cache"
-        assert client.get("/static/app.js").headers["cache-control"] == "no-cache"
+        assert client.get("/static/console/app.js").headers["cache-control"] == "no-cache"
         # 接口响应不受影响（本来就是动态的）
         r = client.get("/api/about")
     assert "cache-control" not in r.headers
@@ -2191,51 +2194,17 @@ def test_update_check_requires_admin(env_file, update_cache_clean):
     assert r.status_code == 403
 
 
-def test_hidden_toggled_elements_not_defeated_by_display():
-    """靠 hidden 属性切换显隐的元素，其类规则不得缺 [hidden] 兜底。
-
-    作者样式里的 display 声明（如 .modal-mask{display:flex}、.badge{display:
-    inline-block}）会压过 UA 样式表的 [hidden]{display:none}——检查更新弹窗
-    曾因此打开页面即常显、遮罩盖住整页且点取消也关不掉。用静态 HTML+CSS 交叉
-    断言锁死该类别回归（渲染级验证需真实浏览器，以规则存在性代理）。"""
-    import re as _re
-
-    html = (HERE / "static" / "index.html").read_text(encoding="utf-8")
-    css = (HERE / "static" / "style.css").read_text(encoding="utf-8")
-    # 初始带 hidden 属性的元素：<tag ... id/class/hidden 属性顺序不定>
-    # aria-hidden="true" 的装饰元素不属于显隐切换，正则要求 hidden 是独立属性
-    entries = []
-    for m in _re.finditer(r"<\w+[^>]*?\shidden(?:\s|>|[^\w-])", html):
-        tag_html = m.group(0)
-        el_id = _re.search(r'\bid="([\w-]+)"', tag_html)
-        classes = _re.search(r'\bclass="([^"]*)"', tag_html)
-        if el_id and classes:
-            entries.append((el_id.group(1), classes.group(1)))
-    # CSS 里声明了 display:（值非 none）且选择器不带 [hidden] 的块
-    visible_decl: list[tuple[str, str]] = []  # (选择器, display 值)
-    for block in css.split("}"):
-        sel, sep, body = block.partition("{")
-        if not sep or "[hidden]" in sel:
-            continue
-        m = _re.search(r"display\s*:\s*([^;]+)", body)
-        if m and m.group(1).strip() != "none":
-            visible_decl.append((sel, m.group(1)))
-    assert visible_decl, "CSS 解析异常：未提取到任何 display 声明"
-
-    for el_id, classes in entries:
-        for cls in classes.split():
-            # (?![\w-]) 精确到类名边界：.btn 不匹配 .btn-row / .lx-item-btns
-            defeats_hidden = any(
-                _re.search(rf"\.{_re.escape(cls)}(?![\w-])", sel) for sel, _ in visible_decl)
-            if not defeats_hidden:
-                continue
-            has_fallback = (
-                _re.search(rf"#{_re.escape(el_id)}\[hidden\][^{{]*{{[^}}]*display\s*:\s*none", css)
-                or _re.search(rf"\.{_re.escape(cls)}\[hidden\][^{{]*{{[^}}]*display\s*:\s*none", css))
-            assert has_fallback, (
-                f"#{el_id} 靠 hidden 属性切换，但 .{cls} 的 display 声明会压过 UA 的 "
-                f"[hidden] 规则导致常显——需补 .{cls}[hidden] 或 #{el_id}[hidden] "
-                f"{{ display: none; }} 兜底")
+def test_console_settings_cover_the_complete_config_schema():
+    """Deleting the old frontend must not strand any supported configuration."""
+    sources = "\n".join(path.read_text(encoding="utf-8")
+                        for path in (HERE / "console" / "src").glob("*.*")
+                        if path.suffix in {".js", ".jsx"})
+    assert set(webui.SCHEMA) <= {key for key in webui.SCHEMA if key in sources}
+    html = (HERE / "static" / "console.html").read_text(encoding="utf-8")
+    assert '/static/console/app.js' in html
+    for filename in ("index.html", "app.js", "style.css"):
+        assert not (HERE / "static" / filename).exists()
+    assert "'/advanced'" not in sources
 
 
 def test_console_platform_registry_masks_auth_and_saves_enable_without_restart(env_file, svctl):

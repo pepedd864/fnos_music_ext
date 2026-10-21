@@ -9,7 +9,7 @@ CI（release.yml / ci.yml）在配置了 ALIPAY_QRCODE secret（支付宝收款�
    必须用 ERROR_CORRECT_H（30% 冗余）保证可扫；徽标宽高取二维码的 ~22%，
    低于容错上限。
 2. WebUI「关于」页在二维码下方另附「支付宝」文字徽标（不依赖本图，见
-   webui-service/static/index.html 打赏卡片）。
+   新控制台「关于」页的支持项目卡片）。
 
 沙箱/CI 环境可能没有中文字体：候选路径找不到、fc-list 也无 zh 字体时降级为
 不带徽标的纯二维码（仍 ERROR_CORRECT_H），文字说明由 WebUI 承担，不视为失败。

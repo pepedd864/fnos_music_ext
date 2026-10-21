@@ -9,6 +9,9 @@ import { AppstoreOutlined, CheckCircleFilled, CloudDownloadOutlined, CloudOutlin
   MoreOutlined, PlayCircleOutlined, ReloadOutlined, SettingOutlined, SoundOutlined, SwapOutlined, UndoOutlined } from '@ant-design/icons';
 import 'antd/dist/reset.css';
 import './style.css';
+import { pickNas } from './nas.js';
+import { settingPages } from './settings-model.js';
+import { Settings, SaveSettings, settingsMenu, useSettings } from './settings.jsx';
 
 const { Header, Sider, Content } = Layout;
 const { Title, Text, Paragraph } = Typography;
@@ -40,7 +43,11 @@ async function api(path, body, method) {
     method: method || (body ? 'POST' : 'GET'), headers: body ? { 'Content-Type': 'application/json' } : {},
     body: body ? JSON.stringify(body) : undefined });
   const data = await response.json().catch(() => ({}));
-  if (!response.ok || data.ok === false) throw new Error(typeof data.detail === 'string' ? data.detail : data.error || `请求失败（${response.status}）`);
+  if (!response.ok || data.ok === false) {
+    const error = new Error(typeof data.detail === 'string' ? data.detail : typeof data.error === 'string' ? data.error : typeof data.data?.message === 'string' ? data.data.message : Array.isArray(data.detail) ? data.detail.map(item => item.msg).join('；') : `请求失败（${response.status}）`);
+    error.status = response.status;
+    throw error;
+  }
   return data;
 }
 const library = body => api('/api/library', body);
@@ -97,7 +104,7 @@ function Platforms({ m }) {
     <Row gutter={[20, 20]}>{m.platforms.map(p => <Col xs={24} lg={8} key={p.id}><Card className="platform-card" title={<Space size={12}><PlatformLogo platform={p} /><Text strong>{p.name}</Text></Space>} extra={<Switch checked={p.enabled} loading={m.busy === p.id} aria-label={`${p.enabled ? '停用' : '启用'}${p.name}`} onChange={value => m.togglePlatform(p, value)} />}>
       <Space direction="vertical" size={18} style={{ width: '100%' }}><Badge status={p.auth?.logged_in ? 'success' : p.status === '登录已过期' ? 'warning' : 'default'} text={p.status} /><Flex justify="space-between" align="center"><Tag color={p.enabled ? 'blue' : 'default'}>{p.enabled ? '参与搜歌' : '尚未启用'}</Tag><Button type="link" onClick={() => m.setAccount(p.id)}>{p.auth?.logged_in ? '管理账号' : '登录'}<LinkOutlined /></Button></Flex></Space>
     </Card></Col>)}</Row>
-    <Collapse items={[{ key: 'advanced', label: '其他来源与高级接入', children: <Space direction="vertical" size={14}><Space><CloudOutlined /><Text>网易云音乐</Text></Space><Space><CloudOutlined /><Text>洛雪自定义源</Text></Space><Button href={BASE + '/advanced'} target="_blank" icon={<SettingOutlined />}>打开高级设置</Button></Space> }]} />
+    <Collapse items={[{ key: 'sources', label: '其他来源与高级接入', children: <Space direction="vertical" size={14}><Space><CloudOutlined /><Text>网易云音乐</Text></Space><Space><CloudOutlined /><Text>洛雪自定义源</Text></Space><Button onClick={() => m.navigate('source-settings')} icon={<SettingOutlined />}>音源设置</Button></Space> }]} />
   </Space>;
 }
 function Account({ m }) {
@@ -177,10 +184,7 @@ function Tasks({ m }) {
   </List.Item>} /></Card>;
 }
 async function chooseDirectory() {
-  const mod = await import(/* @vite-ignore */ BASE + '/static/vendor/trim-web-app.js');
-  const sdk = new mod.TrimApp();
-  const result = await sdk.pickUserFile({ directory: true, title: '选择音乐目录', okText: '选择', sidebarGroup: ['myFiles', 'otherShare', 'favorites'] });
-  return result?.data?.[0];
+  return pickNas(BASE, { title: '选择音乐目录' });
 }
 function Directories({ m }) {
   const [open, setOpen] = useState(false), [path, setPath] = useState('');
@@ -224,8 +228,9 @@ function ProduceModal({ m }) {
 }
 function Console() {
   const { message } = App.useApp();
-  const [page, setPage] = useState(() => new URLSearchParams(location.search).get('page') || 'library'), [filter, setFilter] = useState('all'), [collapsed, setCollapsed] = useState(false);
+  const [page, setPage] = useState(() => { const key = new URLSearchParams(location.search).get('page'); return [...pages.map(item => item.key), ...Object.keys(settingPages)].includes(key) ? key : 'library'; }), [filter, setFilter] = useState('all'), [collapsed, setCollapsed] = useState(false);
   const [query, setQuery] = useState(''), [rootFilter, setRootFilter] = useState(''), [pageNumber, setPageNumber] = useState(1), [data, setData] = useState(null), [platforms, setPlatforms] = useState([]), [quality, setQuality] = useState('mp3_128');
+  const [settingsRevision, setSettingsRevision] = useState(0);
   const [error, setError] = useState(''), [platformError, setPlatformError] = useState(''), [loading, setLoading] = useState(false), [busy, setBusy] = useState('');
   const [selected, setSelected] = useState(null), [account, setAccount] = useState(null), [acquire, setAcquire] = useState(null), [convert, setConvert] = useState(null), [playing, setPlaying] = useState(null), [discoverQuery, setDiscoverQuery] = useState('');
   const epoch = useRef(0), contentRef = useRef(null);
@@ -238,6 +243,9 @@ function Console() {
     finally { if (version === epoch.current) setLoading(false); }
   };
   const loadPlatforms = async () => { try { const r = await api('/api/console/platforms'); setPlatforms(r.items); setQuality(['mp3_128', 'mp3_320', 'lossless'].includes(r.quality) ? r.quality : 'mp3_128'); setPlatformError(''); } catch (err) { setPlatformError(err.message); } };
+  const s = useSettings(api, message, loadPlatforms);
+  const isSettings = Object.hasOwn(settingPages, page);
+  useEffect(() => { if (isSettings && !['service-status', 'about'].includes(page)) s.refresh(); }, [page]);
   useEffect(() => { load(); return () => { epoch.current++; }; }, [query, filter, pageNumber, rootFilter]);
   useEffect(() => { loadPlatforms(); }, []);
   const pending = data?.tasks?.some(j => ['running', 'queued'].includes(j.state));
@@ -248,13 +256,14 @@ function Console() {
   const togglePlatform = async (p, value) => { setBusy(p.id); try { await api(`/api/console/platforms/${p.id}`, { enabled: value }, 'PUT'); await loadPlatforms(); message.success(value ? '平台已启用' : '平台已停用'); } catch (err) { message.error(err.message); } finally { setBusy(''); } };
   const changeQuality = async value => { try { await api('/api/config', { values: { FNMUSIC_QQ_QUALITY: value, FNMUSIC_QUALITY_MODE: value === 'mp3_128' ? 'smooth' : value === 'mp3_320' ? 'balanced' : 'high' } }, 'PUT'); setQuality(value); message.success('默认音质已更新，对之后的播放与获取生效'); } catch (err) { message.error(err.message); } };
   const m = { contentRef, page, filter, setFilter: value => { setFilter(value); setPageNumber(1); }, query, setQuery, rootFilter, setRootFilter, pageNumber, setPageNumber, data, songs: data?.songs || [], roots: data?.roots || [], trash: data?.trash || [], jobs: data?.tasks || [], platforms, quality, changeQuality, loading, busy, selected, setSelected, account, setAccount, acquire, setAcquire, convert, setConvert, playing, setPlaying, discoverQuery, setDiscoverQuery, message, navigate, mutate, togglePlatform, loadPlatforms };
-  const heading = headings[page] || headings.library;
+  const heading = settingPages[page] || headings[page] || headings.library;
   return <>
-    <Layout className="app-layout"><Sider theme="light" width={224} collapsedWidth={72} collapsed={collapsed} breakpoint="lg" onCollapse={setCollapsed} className="sidebar"><div className="brand"><Text strong style={{ fontSize: 18 }}>{collapsed ? 'fn' : 'fnMusic'}</Text></div><div className="sidebar-nav"><Menu mode="inline" selectedKeys={[page === 'library' && filter === 'multi' ? 'versions' : page === 'library' && filter === 'trash' ? 'trash' : page]} onClick={({ key }) => navigate(key)} items={[{ type: 'group', label: '工作空间', children: pages }, { type: 'group', label: '整理', children: [{ key: 'versions', icon: <SwapOutlined />, label: '多音质版本' }, { key: 'trash', icon: <DeleteOutlined />, label: '回收站' }] }]} /></div><div className="sidebar-foot"><Button type="text" href={BASE + '/advanced'} target="_blank" aria-label="高级设置" icon={<SettingOutlined />}>{!collapsed && '高级设置'}</Button></div></Sider>
-      <Layout className="main-layout"><Header className="app-header"><Flex justify="space-between" align="center" style={{ height: '100%' }}><Space size={18}><Button type="text" aria-label="收起或展开导航" icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />} onClick={() => setCollapsed(!collapsed)} /><Breadcrumb items={[{ title: 'fnMusic' }, { title: heading[0] }]} /></Space><Button type="text" icon={<ReloadOutlined />} onClick={() => { load(); loadPlatforms(); }}>刷新</Button></Flex></Header><Content ref={contentRef} className="page-content" role="main" aria-label={heading[0]} tabIndex={0}><div className="page-inner"><Flex justify="space-between" align="center" wrap gap={16} className="page-heading"><div><Title level={2}>{heading[0]}</Title><Text type="secondary">{heading[1]}</Text></div>{['library', 'directories'].includes(page) && <Button icon={<ReloadOutlined />} disabled={!m.roots.length || pending} onClick={() => mutate({ action: 'enqueue', kind: 'scan' }, '扫描任务已加入')}>扫描曲库</Button>}</Flex>
-        {error && <Alert type="error" showIcon title={error} action={<Button size="small" onClick={() => load()}>重试</Button>} style={{ marginBottom: 20 }} />}{platformError && ['platforms', 'discover'].includes(page) && <Alert type="error" title={platformError} action={<Button onClick={loadPlatforms}>重试</Button>} style={{ marginBottom: 20 }} />}
-        {page === 'library' ? <>{filter !== 'trash' && <Metrics m={m} />}<Library m={m} /></> : page === 'platforms' ? <Platforms m={m} /> : page === 'discover' ? <Discover m={m} /> : page === 'tasks' ? <Tasks m={m} /> : <Directories m={m} />}
+    <Layout className="app-layout"><Sider theme="light" width={224} collapsedWidth={72} collapsed={collapsed} breakpoint="lg" onCollapse={setCollapsed} className="sidebar"><div className="brand"><Text strong style={{ fontSize: 18 }}>{collapsed ? 'fn' : 'fnMusic'}</Text></div><div className="sidebar-nav"><Menu mode="inline" selectedKeys={[page === 'library' && filter === 'multi' ? 'versions' : page === 'library' && filter === 'trash' ? 'trash' : page]} onClick={({ key }) => navigate(key)} items={[{ type: 'group', label: '工作空间', children: pages }, { type: 'group', label: '整理', children: [{ key: 'versions', icon: <SwapOutlined />, label: '多音质版本' }, { key: 'trash', icon: <DeleteOutlined />, label: '回收站' }] }, { type: 'group', label: '设置', children: settingsMenu }]} /></div><div className="sidebar-foot"><Button type="text" onClick={() => navigate('service-status')} aria-label="运行状态" icon={<SettingOutlined />}>{!collapsed && '运行状态'}</Button></div></Sider>
+      <Layout className="main-layout"><Header className="app-header"><Flex justify="space-between" align="center" style={{ height: '100%' }}><Space size={18}><Button type="text" aria-label="收起或展开导航" icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />} onClick={() => setCollapsed(!collapsed)} /><Breadcrumb items={[{ title: 'fnMusic' }, { title: heading[0] }]} /></Space><Button type="text" icon={<ReloadOutlined />} onClick={() => { if (isSettings) { if (['service-status', 'about'].includes(page)) setSettingsRevision(value => value + 1); else s.refresh(); } else { load(); loadPlatforms(); } }}>刷新</Button></Flex></Header><Content ref={contentRef} className="page-content" role="main" aria-label={heading[0]} tabIndex={0}><div className="page-inner"><Flex justify="space-between" align="center" wrap gap={16} className="page-heading"><div><Title level={2}>{heading[0]}</Title><Text type="secondary">{heading[1]}</Text></div>{['library', 'directories'].includes(page) && <Button icon={<ReloadOutlined />} disabled={!m.roots.length || pending} onClick={() => mutate({ action: 'enqueue', kind: 'scan' }, '扫描任务已加入')}>扫描曲库</Button>}</Flex>
+        {!isSettings && error && <Alert type="error" showIcon title={error} action={<Button size="small" onClick={() => load()}>重试</Button>} style={{ marginBottom: 20 }} />}{platformError && ['platforms', 'discover'].includes(page) && <Alert type="error" title={platformError} action={<Button onClick={loadPlatforms}>重试</Button>} style={{ marginBottom: 20 }} />}
+        {isSettings ? <Settings key={page + settingsRevision} page={page} s={s} api={api} base={BASE} m={m} /> : page === 'library' ? <>{filter !== 'trash' && <Metrics m={m} />}<Library m={m} /></> : page === 'platforms' ? <Platforms m={m} /> : page === 'discover' ? <Discover m={m} /> : page === 'tasks' ? <Tasks m={m} /> : <Directories m={m} />}
       </div></Content>
+    <SaveSettings s={s} />
     {playing && <Card className="audio-player" size="small"><Flex align="center" gap={12} wrap><Text ellipsis className="playing-title">{playing.path.split('/').pop()}</Text><audio key={playing.id} autoPlay controls src={BASE + '/api/library/audio?id=' + encodeURIComponent(playing.id)} onError={() => message.error('无法播放此文件，请重新扫描曲库')} /><Button type="text" onClick={() => setPlaying(null)}>关闭</Button></Flex></Card>}
       </Layout></Layout><SongDrawer m={m} /><Account m={m} /><ProduceModal m={m} />
   </>;

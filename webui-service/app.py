@@ -28,7 +28,7 @@ from pathlib import Path
 import anyio
 import httpx
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
@@ -1691,7 +1691,8 @@ install_console_api(app, sys.modules[__name__])
 
 @app.get('/advanced')
 async def advanced_index():
-    return FileResponse(STATIC_DIR / 'index.html')
+    # Keep bookmarks working; the Ant Design console is the only frontend.
+    return RedirectResponse('./?page=storage-settings', status_code=307)
 
 @app.get("/")
 async def index():

@@ -1165,9 +1165,17 @@ chmod 0644 \
     "${BASE_DIR}/musicbox-service/playback.py" \
     "${BASE_DIR}/lxmusic-service/app.py" "${BASE_DIR}/lxmusic-service/source_runtime.py" \
     "${BASE_DIR}/lxmusic-service/verify_source.py" "${BASE_DIR}/lxmusic-service/js/bridge.js" \
-    "${BASE_DIR}/webui-service/app.py" "${BASE_DIR}/webui-service/static/index.html" \
-    "${BASE_DIR}/webui-service/static/app.js" "${BASE_DIR}/webui-service/static/style.css" \
+    "${BASE_DIR}/webui-service/app.py" "${BASE_DIR}/webui-service/console_api.py" \
+    "${BASE_DIR}/webui-service/static/console.html" \
+    "${BASE_DIR}/webui-service/static/console/app.js" "${BASE_DIR}/webui-service/static/console/app.css" \
     2>/dev/null || true
+
+# The React console replaces the former management page, including upgraded installs.
+if [ -f "${BASE_DIR}/webui-service/static/console.html" ] && \
+   [ -f "${BASE_DIR}/webui-service/static/console/app.js" ]; then
+    rm -f "${BASE_DIR}/webui-service/static/index.html" \
+        "${BASE_DIR}/webui-service/static/app.js" "${BASE_DIR}/webui-service/static/style.css"
+fi
 
 MUSICDL_FLAG="false"
 MUSICBOX_FLAG="false"
