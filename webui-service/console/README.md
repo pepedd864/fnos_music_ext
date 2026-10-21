@@ -6,11 +6,13 @@ React + Ant Design 是唯一管理页，使用已确认的 A 布局。所有列�
 
 - `/api/console/platforms`：平台注册表、脱敏账号状态、启用状态。
 - `/api/console/platforms/:id/search`：按平台搜索。
-- `/api/console/platforms/qq/recommend`：现有 QQ 个人推荐。
+- `/api/console/platforms/:id/recommend`：按平台能力获取个人推荐，当前接入 QQ。
 - `/api/qq/auth/*`：沿用原有 QR 登录和凭据存储。
 - `POST /api/library`：仅桌面宿主网关提供，容器直连明确返回 501。
 - `/api/library/audio?id=...`：管理员范围内的固定文件版本试听，支持 Range。
 
 宿主索引位于 `sources-data/console-library/catalog.sqlite3`，不触碰官方音乐数据库。回收站位于同目录的 `trash/`，在用户音乐目录之外；不提供永久清空入口。任务记录可跨重启查看，中断任务由用户点击重试。
+
+搜索（`?page=search`）与推荐（`?page=recommendations`）使用独立导航、平台选择与结果状态；旧 `?page=discover` 书签兼容到搜索。两页均通过统一平台选择器操作，未接入推荐的平台明确显示状态。搜索翻页沿用已提交的关键词，草稿编辑不会改变现有结果的来源；切换平台或离开页面取消未完成请求，晚到结果不会覆盖新页面。
 
 当前酷狗、酷我的搜索/保存复用 musicdl；账号登录和个人推荐尚未接入，页面不会伪造登录成功。默认版本仅用于扩展管理页，不会给飞牛官方播放器增加音质选择按钮。平台搜索结果与账号权限仍受各平台服务状态影响。

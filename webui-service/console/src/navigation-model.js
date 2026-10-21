@@ -1,5 +1,6 @@
 export function initialNavigation(search, pages) {
-  const params = new URLSearchParams(search), page = params.get('page');
+  const params = new URLSearchParams(search), requested = params.get('page');
+  const page = requested === 'discover' ? 'search' : requested;
   if (page === 'versions') return { page: 'library', filter: 'multi' };
   return { page: pages.includes(page) ? page : 'library', filter: page === 'library' && params.get('filter') === 'multi' ? 'multi' : 'all' };
 }

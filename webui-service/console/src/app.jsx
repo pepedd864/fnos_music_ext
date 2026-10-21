@@ -6,12 +6,14 @@ import { Alert, App, Avatar, Badge, Breadcrumb, Button, Card, Col, Collapse, Con
 import zhCN from 'antd/locale/zh_CN';
 import { AppstoreOutlined, CheckCircleFilled, CloudDownloadOutlined, CloudOutlined, DeleteOutlined,
   FileOutlined, FolderOpenOutlined, LinkOutlined, MenuFoldOutlined, MenuUnfoldOutlined,
-  MoreOutlined, PlayCircleOutlined, ReloadOutlined, SettingOutlined, SoundOutlined, SwapOutlined, UndoOutlined } from '@ant-design/icons';
+  MoreOutlined, PlayCircleOutlined, ReloadOutlined, SearchOutlined, CompassOutlined, SettingOutlined, SoundOutlined, SwapOutlined, UndoOutlined } from '@ant-design/icons';
 import 'antd/dist/reset.css';
 import './style.css';
 import { pickNas } from './nas.js';
 import { acquisitionQuality } from './quality-model.js';
 import { initialNavigation, navigationParams } from './navigation-model.js';
+import { emptyDiscovery } from './discovery-model.js';
+import { Discovery } from './discovery.jsx';
 import { settingPages } from './settings-model.js';
 import { Settings, SaveSettings, settingsMenu, useSettings } from './settings.jsx';
 
@@ -28,21 +30,23 @@ const preferred = song => song.files.find(f => f.id === song.preferred) || song.
 const pages = [
   { key: 'library', label: '我的曲库', icon: <SoundOutlined /> },
   { key: 'platforms', label: '音乐平台', icon: <AppstoreOutlined /> },
-  { key: 'discover', label: '搜索与推荐', icon: <CloudOutlined /> },
+  { key: 'search', label: '搜索', icon: <SearchOutlined /> },
+  { key: 'recommendations', label: '推荐', icon: <CompassOutlined /> },
   { key: 'tasks', label: '下载任务', icon: <CloudDownloadOutlined /> },
   { key: 'directories', label: '音乐目录', icon: <FolderOpenOutlined /> },
 ];
 const headings = {
   library: ['我的曲库', '歌曲聚合展示，音质与文件版本在一处管理。'],
   platforms: ['音乐平台', '连接常用账号，分别管理平台启用状态与登录状态。'],
-  discover: ['搜索与推荐', '发现歌曲，按需保存到 NAS。'],
+  search: ['搜索', '按平台搜索歌曲、歌手或专辑。'],
+  recommendations: ['推荐', '发现合你口味的歌曲，按需保存到 NAS。'],
   tasks: ['下载任务', '查看音质获取与文件整理的进度和结果。'],
   directories: ['音乐目录', '管理你选中的 NAS 目录，包含已有本地音乐。'],
   trash: ['回收站', '恢复移入回收站的音乐文件。'],
 };
 
-async function api(path, body, method) {
-  const response = await fetch(BASE + path, { credentials: 'same-origin', cache: 'no-store',
+async function api(path, body, method, signal) {
+  const response = await fetch(BASE + path, { credentials: 'same-origin', cache: 'no-store', signal,
     method: method || (body ? 'POST' : 'GET'), headers: body ? { 'Content-Type': 'application/json' } : {},
     body: body ? JSON.stringify(body) : undefined });
   const data = await response.json().catch(() => ({}));
@@ -177,7 +181,7 @@ function SongDrawer({ m }) {
     <Space size={18} align="start"><Cover song={song} size={82} /><div><Title level={4} style={{ margin: '0 0 8px' }}>{song.title}</Title><Text type="secondary">{song.artist || '未知歌手'}</Text></div></Space>
     <Descriptions column={1} size="small" items={[{ key: 'album', label: '专辑', children: song.album || '—' }, { key: 'duration', label: '时长', children: duration(song.duration_s) }]} />
     <div><Title level={5}>已有音质版本 <Text type="secondary">{song.files.length} 份</Text></Title><VersionFiles song={song} m={m} /></div>
-    <Button icon={<CloudDownloadOutlined />} onClick={() => { m.setDiscoverQuery(`${song.title} ${song.artist}`); m.navigate('discover'); }}>查找其他音质</Button>
+    <Button icon={<CloudDownloadOutlined />} onClick={() => { m.setSearchQuery(`${song.title} ${song.artist}`); m.setSearchState(emptyDiscovery(m.searchState.platformId)); m.navigate('search'); }}>查找其他音质</Button>
     <Text type="secondary">默认版本当前用于管理页试听，尚未同步到飞牛音乐。</Text>
   </Space>}</Drawer>;
 }
@@ -202,27 +206,6 @@ function Directories({ m }) {
     </Modal>
   </>;
 }
-function Discover({ m }) {
-  const [pid, setPid] = useState('qq'), [items, setItems] = useState([]), [loading, setLoading] = useState(false), [warning, setWarning] = useState(''), [cursor, setCursor] = useState(0), [searchPage, setSearchPage] = useState(1), [mode, setMode] = useState('search'), [hasMore, setHasMore] = useState(false);
-  const epoch = useRef(0);
-  useEffect(() => { epoch.current++; setItems([]); setWarning(''); setHasMore(false); setLoading(false); setCursor(0); setSearchPage(1); }, [pid]);
-  useEffect(() => () => { epoch.current++; }, []);
-  const run = async (kind, next = false) => {
-    const version = ++epoch.current; setLoading(true); setWarning('');
-    const page = next ? searchPage + 1 : 1;
-    try {
-      const result = await api(`/api/console/platforms/${pid}/${kind === 'recommend' ? `recommend?cursor=${next ? cursor : 0}` : `search?q=${encodeURIComponent(m.discoverQuery)}&page=${page}`}`);
-      if (version !== epoch.current) return;
-      setItems(result.items || []); setWarning(result.warning || ''); setCursor(result.next_cursor || 0); setHasMore(result.has_more); setSearchPage(page); setMode(kind);
-    } catch (err) { if (version === epoch.current) { setWarning(err.message); setItems([]); } }
-    finally { if (version === epoch.current) setLoading(false); }
-  };
-  const p = m.platforms.find(p => p.id === pid);
-  return <Space direction="vertical" size={20} style={{ width: '100%' }}><Flex gap={12} wrap><Select aria-label="搜索平台" value={pid} onChange={setPid} options={m.platforms.map(p => ({ value: p.id, label: p.name }))} style={{ width: 160 }} /><Input.Search aria-label="搜索平台歌曲" value={m.discoverQuery} onChange={e => m.setDiscoverQuery(e.target.value)} onSearch={() => run('search')} placeholder="歌曲、歌手或专辑" enterButton="搜索" loading={loading} style={{ width: 360, maxWidth: '100%' }} disabled={!p?.enabled} />{p?.capabilities.recommend && <Button disabled={!p.enabled || !p.auth.logged_in} loading={loading} onClick={() => run('recommend')}>我的 QQ 推荐</Button>}</Flex>
-    {!p?.enabled && <Text type="secondary">请先在音乐平台页启用该平台。</Text>}{warning && <Alert type="warning" title={warning} showIcon />}
-    <Card><List loading={loading} dataSource={items} locale={{ emptyText: <Empty description="搜索歌曲，或获取账号推荐" /> }} renderItem={track => <List.Item actions={[<Button key="save" icon={<CloudDownloadOutlined />} onClick={() => m.setAcquire(track)}>保存到 NAS</Button>]}><List.Item.Meta avatar={<Cover song={track} size={42} />} title={track.title} description={`${track.artist || '未知歌手'} · ${track.album || '未知专辑'} · ${duration(track.duration_s)}`} /></List.Item>} />{hasMore && <Button disabled={loading} onClick={() => run(mode, true)}>{mode === 'recommend' ? '换一批' : '下一页'}</Button>}</Card>
-  </Space>;
-}
 function ProduceModal({ m }) {
   const item = m.acquire || m.convert;
   const [quality, setQuality] = useState('mp3_128'), [root, setRoot] = useState('');
@@ -241,7 +224,9 @@ function Console() {
   const [query, setQuery] = useState(''), [rootFilter, setRootFilter] = useState(''), [pageNumber, setPageNumber] = useState(1), [data, setData] = useState(null), [platforms, setPlatforms] = useState([]), [qualityMode, setQualityMode] = useState('smooth'), [qualityPreferences, setQualityPreferences] = useState({});
   const [settingsRevision, setSettingsRevision] = useState(0);
   const [error, setError] = useState(''), [platformError, setPlatformError] = useState(''), [loading, setLoading] = useState(false), [busy, setBusy] = useState('');
-  const [selected, setSelected] = useState(null), [account, setAccount] = useState(null), [acquire, setAcquire] = useState(null), [convert, setConvert] = useState(null), [playing, setPlaying] = useState(null), [discoverQuery, setDiscoverQuery] = useState('');
+  const [selected, setSelected] = useState(null), [account, setAccount] = useState(null), [acquire, setAcquire] = useState(null), [convert, setConvert] = useState(null), [playing, setPlaying] = useState(null), [searchQuery, setSearchQuery] = useState('');
+  const [searchState, setSearchState] = useState(emptyDiscovery), [recommendState, setRecommendState] = useState(emptyDiscovery);
+  const [discoveryRevision, setDiscoveryRevision] = useState(0);
   const epoch = useRef(0), contentRef = useRef(null);
   useEffect(() => { contentRef.current?.scrollTo({ top: 0, left: 0 }); }, [page, filter, pageNumber, query, rootFilter]);
   const load = async (quiet = false) => {
@@ -264,13 +249,13 @@ function Console() {
   const navigate = key => { setSelected(null); setPage(key === 'versions' ? 'library' : key); setFilter(key === 'versions' ? 'multi' : 'all'); setPageNumber(1); };
   const togglePlatform = async (p, value) => { setBusy(p.id); try { await api(`/api/console/platforms/${p.id}`, { enabled: value }, 'PUT'); await loadPlatforms(); message.success(value ? '平台已启用' : '平台已停用'); } catch (err) { message.error(err.message); } finally { setBusy(''); } };
 
-  const m = { contentRef, page, filter, setFilter: value => { setFilter(value); setPageNumber(1); }, query, setQuery, rootFilter, setRootFilter, pageNumber, setPageNumber, data, songs: data?.songs || [], roots: data?.roots || [], trash: data?.trash || [], jobs: data?.tasks || [], platforms, qualityMode, qualityPreferences, loading, busy, selected, setSelected, account, setAccount, acquire, setAcquire, convert, setConvert, playing, setPlaying, discoverQuery, setDiscoverQuery, message, navigate, mutate, togglePlatform, loadPlatforms };
+  const m = { contentRef, page, filter, setFilter: value => { setFilter(value); setPageNumber(1); }, query, setQuery, rootFilter, setRootFilter, pageNumber, setPageNumber, data, songs: data?.songs || [], roots: data?.roots || [], trash: data?.trash || [], jobs: data?.tasks || [], platforms, qualityMode, qualityPreferences, loading, busy, selected, setSelected, account, setAccount, acquire, setAcquire, convert, setConvert, playing, setPlaying, searchQuery, setSearchQuery, searchState, setSearchState, discoveryRevision, message, navigate, mutate, togglePlatform, loadPlatforms };
   const heading = settingPages[page] || headings[page] || headings.library;
   return <>
     <Layout className="app-layout"><Sider theme="light" width={224} collapsedWidth={72} collapsed={collapsed} breakpoint="lg" onCollapse={setCollapsed} className="sidebar"><div className="brand"><Text strong style={{ fontSize: 18 }}>{collapsed ? 'fn' : 'fnMusic'}</Text></div><div className="sidebar-nav"><Menu mode="inline" selectedKeys={[page]} onClick={({ key }) => navigate(key)} items={[{ type: 'group', label: '工作空间', children: pages }, { type: 'group', label: '整理', children: [{ key: 'trash', icon: <DeleteOutlined />, label: '回收站' }] }, { type: 'group', label: '设置', children: settingsMenu }]} /></div></Sider>
-      <Layout className="main-layout"><Header className="app-header"><Flex justify="space-between" align="center" style={{ height: '100%' }}><Space size={18}><Button type="text" aria-label="收起或展开导航" icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />} onClick={() => setCollapsed(!collapsed)} /><Breadcrumb items={[{ title: 'fnMusic' }, { title: heading[0] }]} /></Space><Button type="text" icon={<ReloadOutlined />} onClick={() => { if (isSettings) { if (['service-status', 'about'].includes(page)) setSettingsRevision(value => value + 1); else s.refresh(); } else { load(); loadPlatforms(); } }}>刷新</Button></Flex></Header><Content ref={contentRef} className="page-content" role="main" aria-label={heading[0]} tabIndex={0}><div className="page-inner"><Flex justify="space-between" align="center" wrap gap={16} className="page-heading"><div><Title level={2}>{heading[0]}</Title><Text type="secondary">{heading[1]}</Text></div>{['library', 'directories'].includes(page) && <Button icon={<ReloadOutlined />} disabled={!m.roots.length || pending} onClick={() => mutate({ action: 'enqueue', kind: 'scan' }, '扫描任务已加入')}>扫描曲库</Button>}</Flex>
-        {!isSettings && error && <Alert type="error" showIcon title={error} action={<Button size="small" onClick={() => load()}>重试</Button>} style={{ marginBottom: 20 }} />}{platformError && ['platforms', 'discover'].includes(page) && <Alert type="error" title={platformError} action={<Button onClick={loadPlatforms}>重试</Button>} style={{ marginBottom: 20 }} />}
-        {isSettings ? <Settings key={page + settingsRevision} page={page} s={s} api={api} base={BASE} m={m} /> : page === 'library' ? <><Metrics m={m} /><Library m={m} /></> : page === 'trash' ? <Trash m={m} /> : page === 'platforms' ? <Platforms m={m} /> : page === 'discover' ? <Discover m={m} /> : page === 'tasks' ? <Tasks m={m} /> : <Directories m={m} />}
+      <Layout className="main-layout"><Header className="app-header"><Flex justify="space-between" align="center" style={{ height: '100%' }}><Space size={18}><Button type="text" aria-label="收起或展开导航" icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />} onClick={() => setCollapsed(!collapsed)} /><Breadcrumb items={[{ title: 'fnMusic' }, { title: heading[0] }]} /></Space><Button type="text" icon={<ReloadOutlined />} onClick={() => { if (isSettings) { if (['service-status', 'about'].includes(page)) setSettingsRevision(value => value + 1); else s.refresh(); } else { load(); loadPlatforms(); if (['search', 'recommendations'].includes(page)) setDiscoveryRevision(value => value + 1); } }}>刷新</Button></Flex></Header><Content ref={contentRef} className="page-content" role="main" aria-label={heading[0]} tabIndex={0}><div className="page-inner"><Flex justify="space-between" align="center" wrap gap={16} className="page-heading"><div><Title level={2}>{heading[0]}</Title><Text type="secondary">{heading[1]}</Text></div>{['library', 'directories'].includes(page) && <Button icon={<ReloadOutlined />} disabled={!m.roots.length || pending} onClick={() => mutate({ action: 'enqueue', kind: 'scan' }, '扫描任务已加入')}>扫描曲库</Button>}</Flex>
+        {!isSettings && error && <Alert type="error" showIcon title={error} action={<Button size="small" onClick={() => load()}>重试</Button>} style={{ marginBottom: 20 }} />}{platformError && ['platforms', 'search', 'recommendations'].includes(page) && <Alert type="error" title={platformError} action={<Button onClick={loadPlatforms}>重试</Button>} style={{ marginBottom: 20 }} />}
+        {isSettings ? <Settings key={page + settingsRevision} page={page} s={s} api={api} base={BASE} m={m} /> : page === 'library' ? <><Metrics m={m} /><Library m={m} /></> : page === 'trash' ? <Trash m={m} /> : page === 'platforms' ? <Platforms m={m} /> : page === 'search' ? <Discovery key="search" kind="search" state={searchState} setState={setSearchState} query={searchQuery} setQuery={setSearchQuery} m={m} api={api} Cover={Cover} PlatformLogo={PlatformLogo} /> : page === 'recommendations' ? <Discovery key="recommend" kind="recommend" state={recommendState} setState={setRecommendState} m={m} api={api} Cover={Cover} PlatformLogo={PlatformLogo} /> : page === 'tasks' ? <Tasks m={m} /> : <Directories m={m} />}
       </div></Content>
     <SaveSettings s={s} />
     {playing && <Card className="audio-player" size="small"><Flex align="center" gap={12} wrap><Text ellipsis className="playing-title">{playing.path.split('/').pop()}</Text><audio key={playing.id} autoPlay controls src={BASE + '/api/library/audio?id=' + encodeURIComponent(playing.id)} onError={() => message.error('无法播放此文件，请重新扫描曲库')} /><Button type="text" onClick={() => setPlaying(null)}>关闭</Button></Flex></Card>}
