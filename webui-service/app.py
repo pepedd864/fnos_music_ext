@@ -40,6 +40,7 @@ from proxy.env_merge import (  # noqa: E402
     render_env,
     write_env_atomic,
 )
+from proxy.quality_policy import validate_channel_qualities  # noqa: E402
 from proxy.fnlog import (  # noqa: E402
     RETENTION_DAYS,
     env_snapshot_lines,
@@ -112,6 +113,7 @@ SCHEMA: dict[str, dict] = {
     "LX_SOURCES": {"kind": "csv", "default": "kg,wy,mg,kw", "group": "lx", "reload": "hot", "label": "lx 平台（按源声明推导）"},
     "FNMUSIC_QUALITY_MODE": {"kind": "enum", "values": ["high", "balanced", "smooth"], "default": "high", "group": "quality", "reload": "hot", "label": "音质偏好"},
     "FNMUSIC_QQ_QUALITY": {"kind": "enum", "values": ["auto", "master", "lossless", "mp3_320", "mp3_128"], "default": "auto", "group": "quality", "reload": "hot", "label": "QQ 音乐音质"},
+    "FNMUSIC_CHANNEL_QUALITIES": {"kind": "str", "default": "{}", "group": "quality", "reload": "hot", "label": "各渠道音质"},
     "FNMUSIC_ROAM_SOURCE": {"kind": "enum", "values": ["local", "qq"], "default": "local", "group": "quality", "reload": "hot", "label": "漫游来源"},
     "FNMUSIC_DL_QUALITY": {"kind": "enum", "values": ["app", "original", "standard"], "default": "app", "group": "quality", "reload": "hot", "label": "下载音质"},
     "FNMUSIC_RECOMMEND_HOT": {"kind": "bool", "default": "true", "group": "recommend", "reload": "hot", "label": "热门榜单推荐"},
@@ -622,6 +624,8 @@ def _is_dir_within(child: str, parent: str) -> bool:
 
 
 def _normalize_value(key: str, raw) -> str:
+    if key == 'FNMUSIC_CHANNEL_QUALITIES':
+        return json.dumps(validate_channel_qualities(raw), ensure_ascii=False, sort_keys=True, separators=(',', ':'))
     if key == "LX_SOURCE_LIST":
         return _normalize_lx_source_list(raw)
     spec = SCHEMA[key]

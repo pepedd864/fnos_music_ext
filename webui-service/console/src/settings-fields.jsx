@@ -4,7 +4,7 @@ import { FolderOpenOutlined } from '@ant-design/icons';
 import { pickNas } from './nas.js';
 const { Text } = Typography;
 const optionNames = { high: '高音质优先', balanced: '平衡', smooth: '流畅优先', auto: '自动 · 跟随音质偏好', master: '母带 FLAC 优先', lossless: '无损 FLAC 优先', mp3_320: 'MP3 320k', mp3_128: '一般 · MP3 128k', local: '飞牛本地曲库', qq: 'QQ 个性化推荐', app: '跟随飞牛 App', original: '原音质文件', standard: 'MP3 320k 优先' };
-const labels = { FNMUSIC_TEE_SAVE_DIR: '下载目录', FNMUSIC_CACHE_DIR: '歌曲缓存目录', FNMUSIC_TEE_CACHE_MAX: '关闭边听边存时保留的缓存数量', FNMUSIC_SEARCH_PROBE: '逐曲探活', FNMUSIC_OFFICIAL_BIND_TIMEOUT_S: '等待飞牛收录的时间（秒）', FNMUSIC_TEE_HANDOFF_MAX: '切歌后继续下载的并行数', FNMUSIC_LIBRARY_SCAN_PATH: '曲库扫描接口', FNMUSIC_LLM_BASE_URL: '服务地址', FNMUSIC_LLM_API_KEY: 'API Key', FNMUSIC_LLM_MODEL: '模型名称' };
+const labels = { FNMUSIC_QUALITY_MODE: '全局默认音质', FNMUSIC_TEE_SAVE_DIR: '下载目录', FNMUSIC_CACHE_DIR: '歌曲缓存目录', FNMUSIC_TEE_CACHE_MAX: '关闭边听边存时保留的缓存数量', FNMUSIC_SEARCH_PROBE: '逐曲探活', FNMUSIC_OFFICIAL_BIND_TIMEOUT_S: '等待飞牛收录的时间（秒）', FNMUSIC_TEE_HANDOFF_MAX: '切歌后继续下载的并行数', FNMUSIC_LIBRARY_SCAN_PATH: '曲库扫描接口', FNMUSIC_LLM_BASE_URL: '服务地址', FNMUSIC_LLM_API_KEY: 'API Key', FNMUSIC_LLM_MODEL: '模型名称' };
 const hints = {
   FNMUSIC_TEE_SAVE_ENABLED: '完整播放在线歌曲后，自动保存到本地曲库。',
   FNMUSIC_AUTO_COVER: '歌曲保存成功后，将专辑封面嵌入音频文件。',

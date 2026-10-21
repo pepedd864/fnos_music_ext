@@ -76,6 +76,21 @@ def test_qq_quality_is_validated_and_saved_without_process_restart(env_file, svc
     assert not any(call[0] in ("start", "stop", "restart") for call in svctl.calls)
 
 
+def test_channel_quality_api_validates_partial_preferences_and_preserves_legacy(env_file, svctl):
+    with authed_client() as client:
+        before = webui.read_env()
+        saved = client.put('/api/config', json={'values': {'FNMUSIC_CHANNEL_QUALITIES': '{"netease":"exhigh","lx:kw":"standard"}'}})
+        assert saved.status_code == 200
+        after = webui.read_env()
+        assert {key: after[key] for key in before} == before
+        assert client.put('/api/config', json={'values': {'FNMUSIC_CHANNEL_QUALITIES': '{"kuwo":"lossless"}'}}).status_code == 400
+        rows = {row['id']: row for row in client.get('/api/console/quality').json()['channels']}
+        assert rows['netease']['preference'] == 'exhigh'
+        assert rows['lx:kw']['preference'] == 'standard'
+        assert not rows['kuwo']['configurable']
+    assert not any(call[0] in ('start', 'stop', 'restart') for call in svctl.calls)
+
+
 @pytest.fixture
 def svctl(monkeypatch):
     calls: list[tuple] = []

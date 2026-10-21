@@ -13,6 +13,7 @@ proxy/*
 !proxy/fnlog.py
 !proxy/publicplaylists.py
 !proxy/version.py
+!proxy/quality_policy.py
 **/__pycache__/
 **/*.pyc
 **/.pytest_cache/

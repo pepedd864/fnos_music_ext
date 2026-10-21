@@ -47,6 +47,7 @@ try:
     from .fnlog import diag as fn_diag
     from .fnlog import env_snapshot_lines, purge_stale, redact, setup_logging, write_env_snapshot
     from .version import get_version
+    from .quality_policy import read_channel_qualities
 except ImportError:  # uvicorn --app-dir proxy
     import recommend as dailyrec  # type: ignore
     import nmplaylists as nmpl  # type: ignore
@@ -58,6 +59,7 @@ except ImportError:  # uvicorn --app-dir proxy
     from fnlog import diag as fn_diag  # type: ignore
     from fnlog import env_snapshot_lines, purge_stale, redact, setup_logging, write_env_snapshot  # type: ignore
     from version import get_version  # type: ignore
+    from quality_policy import read_channel_qualities  # type: ignore
 
 logger = logging.getLogger("fnmusic_proxy")
 QQ_ROAM = RoamQueues()
@@ -194,6 +196,7 @@ CONF = {
     # 推荐双开关 / 封面补全 / .env 热重载默认开，均可被 .env 覆盖
     "quality_mode": (os.environ.get("FNMUSIC_QUALITY_MODE") or "high").strip().lower(),
     "qq_quality": (os.environ.get("FNMUSIC_QQ_QUALITY") or "auto").strip().lower(),
+    "channel_qualities": read_channel_qualities(os.environ.get("FNMUSIC_CHANNEL_QUALITIES")),
     "roam_source": (os.environ.get("FNMUSIC_ROAM_SOURCE") or "local").strip().lower(),
     # App 下载档（2.8.0）：app=跟随 App 显式请求，未知/缺省一律原文件（不擅自有损
     # 转码）；original=强制原文件；standard=强制 MP3 320k（官方"标准"档语义）
@@ -524,6 +527,7 @@ _ENV_WATCH_KEYS: dict[str, tuple[str, str]] = {
     "FNMUSIC_SEARCH_DEEP_MAX_PAGES": ("search_deep_max_pages", "deep_pages"),
     "FNMUSIC_QUALITY_MODE": ("quality_mode", "quality_mode"),
     "FNMUSIC_QQ_QUALITY": ("qq_quality", "qq_quality"),
+    "FNMUSIC_CHANNEL_QUALITIES": ("channel_qualities", "channel_qualities"),
     "FNMUSIC_ROAM_SOURCE": ("roam_source", "roam_source"),
     "FNMUSIC_NETEASE_QUALITY": ("netease_quality", "netease_quality"),
     "FNMUSIC_DL_QUALITY": ("dl_quality", "dl_quality"),
@@ -581,6 +585,8 @@ def _env_watch_path() -> str:
 
 def _env_watch_parse(raw: str, kind: str):
     raw = str(raw or "").strip()
+    if kind == 'channel_qualities':
+        return read_channel_qualities(raw)
     if kind == "bool":
         return raw.lower() in ("true", "1", "yes")
     if kind == "cache_dir":
@@ -694,7 +700,7 @@ def apply_env_hot_reload(env_path: "str | None" = None) -> list[str]:
             changed.append(conf_key)
     if "cache_dir" in changed:
         _migrate_media_refs(old_cache_dir or "", CONF["cache_dir"])
-    if set(changed) & {"quality_mode", "netease_quality"}:
+    if set(changed) & {"quality_mode", "netease_quality", "channel_qualities"}:
         _sync_netease_quality()
     return changed
 
@@ -1077,7 +1083,7 @@ def _qq_delivery_guid(guid: str, *, standard: bool = False) -> str:
         return guid
     if not re.fullmatch(r"online:qq:[A-Za-z0-9]{1,64}", _qq_base_guid(guid)):
         return guid
-    quality = "mp3_320" if standard else str(CONF.get("qq_quality") or "auto")
+    quality = "mp3_320" if standard else str(CONF.get('channel_qualities', {}).get('qq', CONF.get('qq_quality')) or 'auto')
     if quality == "auto":
         quality = str(CONF.get("quality_mode") or "high")
     if quality not in {"high", "balanced", "smooth", "master", "lossless", "mp3_320", "mp3_128"}:
@@ -2952,6 +2958,13 @@ def quality_order(ladder: "list[str] | tuple[str, ...]", mode: "str | None", pri
     return [seq[idx]] + list(reversed(seq[:idx]))
 
 
+def channel_quality_order(channel: str, ladder, primary: str):
+    preference = CONF.get('channel_qualities', {}).get(channel, 'auto')
+    if preference in ladder:
+        return quality_order(ladder, 'high', preference)
+    return quality_order(ladder, CONF.get('quality_mode'), primary)
+
+
 async def resolve_lx_url(client: httpx.AsyncClient, song_id: str, fresh: bool = False,
                          meta: "dict | None" = None) -> "dict | None":
     """洛雪音乐源直链解析：song_id 形如 "lx:kg:<hash>"。
@@ -2974,8 +2987,9 @@ async def resolve_lx_url(client: httpx.AsyncClient, song_id: str, fresh: bool = 
                 return dict(pin[0])
             _LX_URL_PIN.pop(key, None)
     primary = str(CONF.get("lx_quality") or "lossless").strip()
-    qualities = quality_order(_LX_QUALITY_LADDER, CONF.get("quality_mode"), primary)
-    if primary and primary not in qualities:
+    channel = ':'.join(key.split(':')[:2])
+    qualities = channel_quality_order(channel, _LX_QUALITY_LADDER, primary)
+    if primary and primary not in _LX_QUALITY_LADDER and primary not in qualities:
         qualities.insert(0, primary)
 
     extra: dict[str, str] = {}
@@ -3232,7 +3246,7 @@ def _netease_url_pin_store(song_id: str, url: str, ttl: float) -> None:
 
 def _sync_netease_quality() -> None:
     global _NETEASE_URL_CONFIG
-    config = (CONF.get("netease_quality"), CONF.get("quality_mode"))
+    config = (CONF.get("netease_quality"), CONF.get("quality_mode"), CONF.get('channel_qualities', {}).get('netease', 'auto'))
     if _NETEASE_URL_CONFIG != config:
         if _NETEASE_URL_CONFIG is not None:
             _cancel_netease_resolutions()
@@ -3333,11 +3347,12 @@ def _prefetch_netease(request: Request, guid: str) -> None:
 async def _resolve_netease_url_uncached(client: httpx.AsyncClient, song_id: str, fresh: bool) -> str | None:
     key = str(song_id)
     primary = str(CONF.get("netease_quality") or "lossless").strip()
-    qualities = quality_order(_NETEASE_QUALITY_LADDER, CONF.get("quality_mode"), primary)
-    if primary and primary not in qualities:
+    qualities = channel_quality_order('netease', _NETEASE_QUALITY_LADDER, primary)
+    if primary and primary not in _NETEASE_QUALITY_LADDER and primary not in qualities:
         qualities.insert(0, primary)
 
     mode = CONF.get("quality_mode")
+    preference = CONF.get('channel_qualities', {}).get('netease', 'auto')
     for q in qualities:
         started = time.monotonic()
         try:
@@ -3366,7 +3381,7 @@ async def _resolve_netease_url_uncached(client: httpx.AsyncClient, song_id: str,
                             url = str(url)
                             if not url.startswith(("http://", "https://")):
                                 return None
-                            if (str(CONF.get("netease_quality") or "lossless").strip(), CONF.get("quality_mode")) != (primary, mode):
+                            if (str(CONF.get("netease_quality") or "lossless").strip(), CONF.get("quality_mode"), CONF.get('channel_qualities', {}).get('netease', 'auto')) != (primary, mode, preference):
                                 return None
                             # TTL 以服务端 expi（秒）为准，预留 60s 网络余量；上限 30min，
                             # 无 expi 时保守 5min。失败重解析由调用方 refresh=True 触发。

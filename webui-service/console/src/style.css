@@ -7,7 +7,6 @@ body { margin: 0; overflow: hidden; background: #f5f5f5; }
 .sidebar .ant-layout-sider-children { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
 .sidebar-nav { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; }
 .sidebar .ant-menu { border-inline-end: 0 !important; padding: 6px 8px; }
-.sidebar-foot { flex-shrink: 0; margin: 0 12px 16px; padding-top: 12px; border-top: 1px solid #f0f0f0; font-size: 13px; }
 .app-header { background: #fff; padding: 0 28px; border-bottom: 1px solid #f0f0f0; height: 64px; flex-shrink: 0; }
 .page-inner { min-height: 100%; padding: 30px 32px 24px; width: 100%; }
 .page-content { min-height: 0; padding: 0; overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
@@ -63,4 +62,11 @@ body { margin: 0; overflow: hidden; background: #f5f5f5; }
   .settings-save { padding: 12px 14px; }
   .settings-stack .ant-list-item { flex-wrap: wrap; gap: 12px; }
   .settings-stack .ant-list-item-action { margin-inline-start: 0; }
+}
+
+.library-table .ant-table-row { cursor: pointer; }
+.library-table .ant-table-row:focus-visible { outline: 2px solid #1677ff; outline-offset: -2px; }
+.channel-quality-select { width: 235px; flex-shrink: 0; }
+@media (max-width: 760px) {
+  .channel-quality-select { width: 100%; }
 }

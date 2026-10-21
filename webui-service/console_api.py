@@ -6,6 +6,7 @@ import re
 import httpx
 from fastapi import HTTPException, Request
 from fastapi.responses import JSONResponse
+from proxy.quality_policy import channel_preference, quality_channels
 
 
 @dataclass(frozen=True)
@@ -82,7 +83,14 @@ def install_console_api(app, service):
             status = '已登录' if p.id == 'qq' and auth.get('logged_in') else '登录已过期' if p.id == 'qq' and auth.get('state') == 'expired' else '暂时无法连接' if p.id == 'qq' and auth.get('state') == 'unavailable' else '待登录'
             items.append({**p.public(), 'enabled': enabled(p), 'status': status,
                           'auth': {k: auth.get(k) for k in ('state', 'logged_in', 'account', 'expires_at')} if p.id == 'qq' else {'state': 'unsupported', 'logged_in': False}})
-        return JSONResponse({'ok': True, 'items': items, 'quality': values.get('FNMUSIC_QQ_QUALITY') or 'mp3_128'}, headers={'Cache-Control': 'no-store'})
+        for item in items:
+            item['quality_preference'] = channel_preference(values, item['id']) if item['id'] == 'qq' else 'original'
+        return JSONResponse({'ok': True, 'items': items, 'quality': channel_preference(values, 'qq'),
+                             'quality_mode': values.get('FNMUSIC_QUALITY_MODE') or 'high'}, headers={'Cache-Control': 'no-store'})
+
+    @app.get('/api/console/quality')
+    async def quality_settings():
+        return {'ok': True, 'channels': quality_channels(service.read_env())}
 
     @app.put('/api/console/platforms/{pid}')
     async def platform_toggle(pid: str, request: Request):

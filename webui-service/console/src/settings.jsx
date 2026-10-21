@@ -5,6 +5,7 @@ import { editableConfig, externalUrl, patchSettingsDraft, persistSettings, provi
 import { SettingFields } from './settings-fields.jsx';
 import { SourceSettings } from './source-settings.jsx';
 import { PublicPlaylists } from './public-playlists.jsx';
+import { QualitySettings } from './quality-settings.jsx';
 const { Text, Paragraph } = Typography;
 
 export function useSettings(api, message, afterSave) {
@@ -122,7 +123,7 @@ export function Settings({ page, s, api, base, m }) {
   return <Space direction="vertical" size={20} className="settings-stack">{s.error && <Alert type="error" title={s.error} action={<Button onClick={s.refresh}>重新连接</Button>} showIcon />}
     {s.report && <Alert type={s.report.error ? 'error' : s.report.warnings.length ? 'warning' : 'success'} title={s.report.error || (s.report.warnings.length ? '配置已保存，部分操作需要处理' : '设置已生效')} description={!s.report.error && s.report.warnings.map((warning, index) => <div key={index}>{warning}</div>)} showIcon closable onClose={s.dismissReport} />}
     {!Object.keys(s.schema).length ? <Spin spinning={s.loading}><Empty description={s.error ? '设置暂不可用' : '正在读取设置'} /></Spin> : <>
-      {page === 'playback-settings' && <><Card title="在线音质与漫游">{fields(['FNMUSIC_QUALITY_MODE', 'FNMUSIC_QQ_QUALITY', 'FNMUSIC_DL_QUALITY', 'FNMUSIC_ROAM_SOURCE'])}</Card><Card title="推荐内容">{fields(['FNMUSIC_RECOMMEND_HOT', 'FNMUSIC_RECOMMEND_DAILY'])}</Card><PublicPlaylists api={api} s={s} /><Card title="网易歌单">{fields(['FNMUSIC_NETEASE_MY_PLAYLISTS', 'FNMUSIC_NETEASE_PLAYLIST_RESIDENT'])}<Button onClick={() => m.navigate('source-settings')}>管理网易账号</Button></Card></>}
+      {page === 'playback-settings' && <><QualitySettings api={api} base={base} s={s} /><Card title="下载与漫游">{fields(['FNMUSIC_DL_QUALITY', 'FNMUSIC_ROAM_SOURCE'])}</Card><Card title="推荐内容">{fields(['FNMUSIC_RECOMMEND_HOT', 'FNMUSIC_RECOMMEND_DAILY'])}</Card><PublicPlaylists api={api} s={s} /><Card title="网易歌单">{fields(['FNMUSIC_NETEASE_MY_PLAYLISTS', 'FNMUSIC_NETEASE_PLAYLIST_RESIDENT'])}<Button onClick={() => m.navigate('source-settings')}>管理网易账号</Button></Card></>}
       {page === 'storage-settings' && <><Card title="边听边存">{fields(['FNMUSIC_TEE_SAVE_ENABLED', 'FNMUSIC_AUTO_COVER', 'FNMUSIC_LYRIC_AUTO_DL', 'FNMUSIC_TEE_CACHE_MAX'])}</Card><Card title="歌曲目录">{fields(['FNMUSIC_TEE_SAVE_DIR', 'FNMUSIC_CACHE_DIR'])}</Card><Card title="飞牛曲库关联">{fields(['FNMUSIC_FAV_AUTO_BIND', 'FNMUSIC_OFFICIAL_BIND_TIMEOUT_S', 'FNMUSIC_TEE_HANDOFF_MAX', 'FNMUSIC_LIBRARY_SCAN_PATH'])}</Card></>}
       {page === 'search-settings' && <Card title="搜索行为">{fields(['FNMUSIC_SEARCH_TIMEOUT', 'FNMUSIC_SEARCH_PROBE', 'FNMUSIC_SEARCH_DEEP_PAGE', 'FNMUSIC_SEARCH_DEEP_MAX_PAGES'])}</Card>}
       {page === 'source-settings' && <SourceSettings api={api} base={base} s={s} m={m} />}
