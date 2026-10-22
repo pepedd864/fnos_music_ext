@@ -38,7 +38,7 @@ const pages = [
 ];
 const headings = {
   library: ['我的曲库', '歌曲聚合展示，音质与文件版本在一处管理。'],
-  platforms: ['音乐平台', '管理平台账号、音质和其他音源。'],
+  platforms: ['音乐平台', ''],
   search: ['搜索', '按平台搜索歌曲、歌手或专辑。'],
   recommendations: ['推荐', '发现合你口味的歌曲，按需保存到 NAS。'],
   tasks: ['下载任务', '查看音质获取与文件整理的进度和结果。'],
@@ -241,7 +241,7 @@ function Console() {
   const navigate = key => { setSelected(null); setPage(key === 'source-settings' ? 'platforms' : key === 'versions' ? 'library' : key); setFilter(key === 'versions' ? 'multi' : 'all'); setPageNumber(1); };
   const togglePlatform = async (p, value) => { if (s.dirty || s.saving) { message.info('请先保存或放弃设置修改'); return; } setBusy(p.id); try { await api(`/api/console/platforms/${p.id}`, { enabled: value }, 'PUT'); await loadPlatforms(); await s.refresh(); message.success(value ? '平台已启用' : '平台已停用'); } catch (err) { message.error(err.message); } finally { setBusy(''); } };
 
-  const m = { contentRef, page, filter, setFilter: value => { setFilter(value); setPageNumber(1); }, query, setQuery, rootFilter, setRootFilter, pageNumber, setPageNumber, data, songs: data?.songs || [], roots: data?.roots || [], trash: data?.trash || [], jobs: data?.tasks || [], platforms, qualityMode, qualityPreferences, loading, busy, selected, setSelected, account, setAccount, acquire, setAcquire, convert, setConvert, playing, setPlaying, searchQuery, setSearchQuery, searchState, setSearchState, discoveryRevision, message, navigate, mutate, togglePlatform, loadPlatforms };
+  const m = { contentRef, page, filter, setFilter: value => { setFilter(value); setPageNumber(1); }, query, setQuery, rootFilter, setRootFilter, pageNumber, setPageNumber, data, songs: data?.songs || [], roots: data?.roots || [], trash: data?.trash || [], jobs: data?.tasks || [], platforms, platformError, qualityMode, qualityPreferences, loading, busy, selected, setSelected, account, setAccount, acquire, setAcquire, convert, setConvert, playing, setPlaying, searchQuery, setSearchQuery, searchState, setSearchState, discoveryRevision, message, navigate, mutate, togglePlatform, loadPlatforms };
   const heading = settingPages[page] || headings[page] || headings.library;
   return <>
     <Layout className="app-layout"><Sider theme="light" width={224} collapsedWidth={72} collapsed={collapsed} breakpoint="lg" onCollapse={setCollapsed} className="sidebar"><div className="brand"><Text strong style={{ fontSize: 18 }}>{collapsed ? 'fn' : 'fnMusic'}</Text></div><div className="sidebar-nav"><Menu mode="inline" selectedKeys={[page]} onClick={({ key }) => navigate(key)} items={[{ type: 'group', label: '工作空间', children: pages }, { type: 'group', label: '整理', children: [{ key: 'trash', icon: <DeleteOutlined />, label: '回收站' }] }, { type: 'group', label: '设置', children: settingsMenu }]} /></div></Sider>

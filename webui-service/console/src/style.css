@@ -25,8 +25,6 @@ body { margin: 0; overflow: hidden; background: #f5f5f5; }
 .title-button { padding: 0; height: auto; white-space: normal; text-align: left; font-weight: 500; color: #262626; }
 .subline { display: block; margin-top: 5px; font-size: 13px; line-height: 1.6; }
 .library-footer { position: sticky; bottom: 0; z-index: 4; margin-top: 16px; padding: 16px 0; background: #f5f5f5; border-top: 1px solid #e8e8e8; }
-.platform-card { height: 100%; }
-.platform-card .ant-card-head { padding-top: 8px; padding-bottom: 8px; }
 .file-card .ant-card-body { padding: 16px; }
 .preferred-file { border-color: #91caff; background: #f0f7ff; }
 .file-meta { font-size: 13px; margin: 16px 0; }
@@ -80,4 +78,31 @@ body { margin: 0; overflow: hidden; background: #f5f5f5; }
   .discovery-search { width: 100%; }
   .discovery-results .ant-list-item { flex-wrap: wrap; gap: 12px; }
   .discovery-results .ant-list-item-action { margin-inline-start: 0; }
+}
+
+.platform-page { width: 100%; max-width: 1160px; }
+.platform-tabs .ant-tabs-nav { margin-bottom: 20px; }
+.platform-default-quality { display: flex; align-items: center; gap: 12px; padding-bottom: 2px; white-space: nowrap; }
+.platform-default-quality .ant-select { width: 174px; }
+.platform-table { border: 1px solid #e8e8e8; border-radius: 8px; overflow: hidden; background: #fff; }
+.platform-table .ant-table-cell { padding: 18px 24px !important; }
+.platform-table .ant-table-thead .ant-table-cell { color: #687483; font-size: 13px; font-weight: 500; }
+.platform-row-action { padding-inline: 0; height: auto; }
+.platform-draft-note, .platform-page > .ant-alert { margin-bottom: 20px; }
+.platform-source-panels { background: #fff; border-color: #e8e8e8; }
+.platform-source-panels .ant-collapse-header { padding: 18px 24px !important; }
+.platform-source-panels .ant-collapse-body { padding: 8px 24px 24px !important; }
+.platform-details .ant-alert { margin-bottom: 24px; }
+.platform-detail-section { padding-bottom: 24px; margin-bottom: 24px; border-bottom: 1px solid #f0f0f0; }
+.platform-detail-section:last-child { padding-bottom: 0; margin-bottom: 0; border-bottom: 0; }
+.platform-detail-section h5 { margin: 0 0 16px; }
+.platform-account-status { margin-top: 10px; }
+.platform-detail-section .ant-list-item { padding-top: 0; }
+@media (max-width: 760px) {
+  .platform-tabs .ant-tabs-nav { flex-wrap: wrap; align-items: flex-start; }
+  .platform-tabs .ant-tabs-extra-content { width: 100%; order: -1; margin-bottom: 14px; }
+  .platform-default-quality { justify-content: space-between; }
+  .platform-table .ant-table-cell { padding: 16px !important; }
+  .platform-source-panels .ant-collapse-header { padding: 16px !important; }
+  .platform-source-panels .ant-collapse-body { padding: 4px 16px 16px !important; }
 }
