@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import { Alert, Badge, Button, Card, Checkbox, Descriptions, Empty, Flex, Form, Image, Input, List, Popconfirm, Select, Space, Switch, Tag, Typography, Upload } from 'antd';
+import { Alert, Button, Card, Collapse, Descriptions, Empty, Flex, Form, Input, List, Popconfirm, Select, Space, Switch, Typography, Upload } from 'antd';
 import { FolderOpenOutlined, UploadOutlined } from '@ant-design/icons';
-import { currentProvider, lxSources, providerNames, selectProvider } from './settings-model.js';
+import { additionalPlatforms, currentProvider, lxSources, mergeAdditionalPlatforms, selectProvider } from './settings-model.js';
 import { SettingFields } from './settings-fields.jsx';
+import { QualitySettings } from './quality-settings.jsx';
 import { pickNas } from './nas.js';
 const { Text } = Typography;
 export async function withPreview(api, provider, operation) {
@@ -13,14 +14,13 @@ export async function withPreview(api, provider, operation) {
     return operation();
   }
 }
-function NeteaseAccount({ api, base, s, m }) {
+export function NeteasePlaylistSettings({ api, base, s }) {
   return <Card title="网易云音乐歌单"><Space direction="vertical" size={20} style={{ width: '100%' }}>
-    <Button onClick={() => m.navigate('platforms')}>管理网易云账号</Button>
     <SettingFields api={api} base={base} s={s} keys={['FNMUSIC_NETEASE_MY_PLAYLISTS', 'FNMUSIC_NETEASE_PLAYLIST_RESIDENT']} />
     <Text type="secondary">账号歌单需要登录。常驻开启后，切换音源仍可使用已选的网易歌单。</Text>
   </Space></Card>;
 }
-function MusicdlSources({ api, s, m }) {
+function MusicdlSources({ api, s }) {
   const [registered, setRegistered] = useState([]), [fallback, setFallback] = useState([]), [busy, setBusy] = useState(false), [error, setError] = useState('');
   const active = useRef(true);
   const load = async (preview = false) => {
@@ -31,8 +31,8 @@ function MusicdlSources({ api, s, m }) {
   };
   useEffect(() => { load(); return () => { active.current = false; }; }, []);
   const raw = Object.hasOwn(s.changes, 'FNMUSIC_ONLINE_SOURCES') ? s.changes.FNMUSIC_ONLINE_SOURCES : s.value('FNMUSIC_ONLINE_SOURCES') || s.value('MUSICDL_SOURCES') || fallback.join(',');
-  const selected = raw.split(',').map(value => value.trim()).filter(Boolean);
-  return <Card title="其他 musicdl 平台" extra={<Button onClick={() => load(true)} loading={busy}>刷新可用平台</Button>}><Space direction="vertical" size={16} style={{ width: '100%' }}><Text type="secondary">QQ、酷狗和酷我账号在音乐平台页管理。</Text><Button onClick={() => m.navigate('platforms')}>打开音乐平台</Button>{error && <Alert type="warning" title={error} showIcon />}<Select aria-label="其他 musicdl 平台" mode="multiple" showSearch value={selected} options={[...new Set([...registered, ...selected])].map(value => ({ value, label: value }))} onChange={values => s.patch({ FNMUSIC_ONLINE_SOURCES: values.join(','), MUSICDL_SOURCES: values.join(',') })} placeholder="选择要启用的平台" style={{ width: '100%' }} /></Space></Card>;
+  const selected = additionalPlatforms(raw);
+  return <Card title="其他平台" extra={<Button onClick={() => load(true)} loading={busy}>刷新可用平台</Button>}><Space direction="vertical" size={16} style={{ width: '100%' }}>{error && <Alert type="warning" title={error} showIcon />}<Select aria-label="其他平台" mode="multiple" showSearch value={selected} disabled={s.saving || s.loading} options={[...new Set([...additionalPlatforms(registered.join(',')), ...selected])].map(value => ({ value, label: value.replace(/MusicClient$/, '') }))} onChange={values => { const merged = mergeAdditionalPlatforms(raw, values); s.patch({ FNMUSIC_ONLINE_SOURCES: merged, MUSICDL_SOURCES: merged }); }} placeholder="选择要启用的平台" style={{ width: '100%' }} /></Space></Card>;
 }
 function LxSources({ api, base, s }) {
   const items = lxSources({ ...s.saved, ...s.changes });
@@ -65,9 +65,10 @@ function LxSources({ api, base, s }) {
     <Text type="secondary">新启用的脚本在保存时校验，失败项会自动取消启用，其余设置继续保存。</Text><SettingFields api={api} base={base} s={s} keys={['LX_SOURCES']} />
   </Space></Card>;
 }
-export function SourceSettings({ api, base, s, m }) {
+export function SourceSettings({ api, base, s }) {
   const provider = currentProvider({ ...s.saved, ...s.changes });
-  return <Space direction="vertical" size={20} style={{ width: '100%' }}><Card title="运行音源"><Space direction="vertical" size={16} style={{ width: '100%' }}><Select aria-label="运行音源" value={provider} options={[{ value: '', label: '暂不启用在线音源' }, ...Object.entries(providerNames).map(([value, label]) => ({ value, label }))]} onChange={value => s.patch(selectProvider(value))} style={{ width: '100%', maxWidth: 380 }} disabled={s.saving} /><Text type="secondary">保存后切换运行音源。已有账号凭据会保留。</Text></Space></Card>
-    {provider === 'musicdl' && <MusicdlSources api={api} s={s} m={m} />}{provider === 'musicbox' && <NeteaseAccount api={api} base={base} s={s} m={m} />}{provider === 'lxmusic' && <LxSources api={api} base={base} s={s} />}
+  return <Space direction="vertical" size={20} style={{ width: '100%' }}>
+    <MusicdlSources api={api} s={s} /><LxSources api={api} base={base} s={s} /><QualitySettings api={api} s={s} scope="other" />
+    <Collapse items={[{ key: 'engine', label: '高级设置', children: <Card title="飞牛音乐默认在线来源"><Space direction="vertical" size={16} style={{ width: '100%' }}><Select aria-label="飞牛音乐默认在线来源" value={provider} options={[{ value: '', label: '关闭在线来源' }, { value: 'musicdl', label: '常用音乐平台' }, { value: 'musicbox', label: '网易云音乐' }, { value: 'lxmusic', label: '洛雪自定义源' }]} onChange={value => s.patch(selectProvider(value))} style={{ width: '100%', maxWidth: 380 }} disabled={s.saving || s.loading} /><Text type="secondary">选择飞牛音乐使用的默认在线来源，保存后生效。</Text></Space></Card> }]} />
   </Space>;
 }

@@ -1,10 +1,9 @@
 export const providerKeys = { musicdl: 'FNMUSIC_MUSICDL_ENABLED', musicbox: 'FNMUSIC_NETEASE_ENABLED', lxmusic: 'FNMUSIC_LX_ENABLED' };
 export const providerNames = { musicdl: 'musicdl 聚合音源', musicbox: '网易云音乐盒子', lxmusic: '洛雪自定义源' };
 export const settingPages = {
-  'playback-settings': ['播放与推荐', '设置在线音质、漫游和推荐歌单。'],
+  'playback-settings': ['播放与推荐', '设置播放、漫游和推荐歌单。'],
   'storage-settings': ['储存与下载', '管理边听边存、歌曲缓存和下载目录。'],
   'search-settings': ['搜索设置', '调整搜索等待时间和翻页方式。'],
-  'source-settings': ['音源设置', '管理运行音源、其他平台、网易账号和洛雪脚本。'],
   'llm-settings': ['大模型', '配置用于推荐的 OpenAI 兼容服务。'],
   'service-status': ['运行状态', '查看当前音源和服务连接情况。'],
   about: ['关于', '版本信息、更新检查和诊断日志。'],
@@ -61,6 +60,17 @@ export function selectProvider(provider) {
 }
 export function currentProvider(values) {
   return Object.entries(providerKeys).find(([, key]) => settingValue(values[key], { kind: 'bool' }))?.[0] || '';
+}
+const commonClients = new Set(['qq', 'kugou', 'kuwo', 'qqmusicclient', 'kugoumusicclient', 'kuwomusicclient']);
+const sourceClients = raw => String(raw || '').split(',').map(value => value.trim()).filter(Boolean);
+export function additionalPlatforms(raw) {
+  return sourceClients(raw).filter(value => !commonClients.has(value.toLowerCase()));
+}
+export function mergeAdditionalPlatforms(raw, selected) {
+  // The common platform switches own these entries. Editing optional sources
+  // must neither disable an account platform nor enable one implicitly.
+  return [...new Set([...sourceClients(raw).filter(value => commonClients.has(value.toLowerCase())),
+    ...additionalPlatforms(selected.join(','))])].join(',');
 }
 export function lxSources(values) {
   const saved = String(values.LX_SOURCE_URL || '').trim();

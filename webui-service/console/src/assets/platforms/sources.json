@@ -25,5 +25,14 @@
     "appStore": "https://apps.apple.com/cn/app/%E9%85%B7%E6%88%91%E9%9F%B3%E4%B9%90-%E5%A5%BD%E9%9F%B3%E8%B4%A8%E7%94%A8%E9%85%B7%E6%88%91/id588673713?uo=4",
     "asset": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/fd/e6/e5/fde6e5b6-8ccd-9c86-e166-2da72d37ef3b/AppIcon-1x_U007emarketing-0-7-0-0-sRGB-85-220-0.png/512x512bb.jpg",
     "bytes": 34099
+  },
+  {
+    "file": "netease.jpg",
+    "bundleId": "com.netease.cloudmusic",
+    "publisher": "Hangzhou Netease Cloud Music Technology Co., Ltd.",
+    "name": "网易云音乐-数亿音乐畅听",
+    "appStore": "https://apps.apple.com/cn/app/%E7%BD%91%E6%98%93%E4%BA%91%E9%9F%B3%E4%B9%90-%E6%95%B0%E4%BA%BF%E9%9F%B3%E4%B9%90%E7%95%85%E5%90%AC/id590338362?uo=4",
+    "asset": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/2d/84/5f/2d845fe3-b1fc-b57b-d6d7-fe5ae6a468f5/appIconNew-0-0-1x_U007epad-0-1-0-85-220.png/512x512bb.jpg",
+    "bytes": 36238
   }
 ]

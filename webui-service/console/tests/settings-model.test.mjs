@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { changedSettings, editableConfig, patchSettingsDraft, persistSettings, lxSources, neteaseCode, publicEntryKey, publicSelection, selectProvider, settingValue, externalUrl } from '../src/settings-model.js';
+import { additionalPlatforms, mergeAdditionalPlatforms, changedSettings, editableConfig, patchSettingsDraft, persistSettings, lxSources, neteaseCode, publicEntryKey, publicSelection, selectProvider, settingValue, externalUrl } from '../src/settings-model.js';
 const schema = { count: { kind: 'int', min: 0, max: 20, label: '数量' }, flag: { kind: 'bool', label: '开关' }, secret: { kind: 'secret' }, FNMUSIC_CACHE_DIR: { kind: 'dir' } };
 test('partial saves retain unrelated credentials, sources and playlist selection', () => {
   assert.deepEqual(changedSettings({ flag: false }, schema), { flag: false });
@@ -41,6 +41,13 @@ test('directory traversal and relative storage locations are rejected before sav
 });
 test('provider selection is mutually exclusive without sending other settings', () => {
   assert.deepEqual(selectProvider('musicbox'), { FNMUSIC_MUSICDL_ENABLED: false, FNMUSIC_NETEASE_ENABLED: true, FNMUSIC_LX_ENABLED: false });
+});
+test('optional platform edits preserve common switches, including legacy source aliases', () => {
+  const raw = 'qq,KuwoMusicClient,MiguMusicClient';
+  assert.deepEqual(additionalPlatforms(raw), ['MiguMusicClient']);
+  assert.equal(mergeAdditionalPlatforms(raw, ['QianqianMusicClient', 'KugouMusicClient']), 'qq,KuwoMusicClient,QianqianMusicClient');
+  assert.equal(mergeAdditionalPlatforms(raw, []), 'qq,KuwoMusicClient');
+  assert.equal(mergeAdditionalPlatforms('', ['MiguMusicClient']), 'MiguMusicClient');
 });
 test('legacy LX activation migrates without erasing explicit inactive selections', () => {
   assert.equal(lxSources({ LX_SOURCE_URL: 'https://test/a.js', LX_SOURCE_LIST: '[{"url":"https://test/a.js"}]' })[0].active, true);
