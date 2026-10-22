@@ -8,7 +8,8 @@ def test_channels_preserve_legacy_qq_and_do_not_claim_unsupported_direct_qualiti
     values = {'FNMUSIC_MUSICDL_ENABLED': 'true', 'FNMUSIC_ONLINE_SOURCES': 'QQMusicClient,KugouMusicClient,KuwoMusicClient', 'FNMUSIC_QQ_QUALITY': 'mp3_128'}
     rows = {row['id']: row for row in quality_channels(values)}
     assert rows['qq']['preference'] == 'mp3_128'
-    assert rows['kugou']['configurable'] is False
+    assert rows['kugou']['configurable'] is True
+    assert {q['value'] for q in rows['kugou']['options']} == {'auto', 'lossless', 'mp3_320', 'mp3_128'}
     assert rows['kuwo']['options'] == [{'value': 'original', 'label': '音源实际音质'}]
     assert rows['lx:kw']['configurable'] is True
     assert rows['lx:kw']['enabled'] is False
@@ -69,3 +70,30 @@ async def test_netease_override_reaches_resolver_independently_of_global_mode(mo
         assert requested == ['exhigh']
     finally:
         proxy._NETEASE_URL_PIN.clear()
+
+
+def test_kugou_quality_delivery_identity_pins_continuation_and_keeps_catalog_id(monkeypatch):
+    from starlette.requests import Request
+    guid = 'online:kugou:' + 'a' * 32 + ':12'
+    proxy._QQ_PLAY_PINS.clear()
+    monkeypatch.setitem(proxy.CONF, 'channel_qualities', {'kugou': 'mp3_128'})
+    request = Request({'type': 'http', 'method': 'GET', 'scheme': 'http', 'path': '/music/api/v1/track/stream',
+                       'query_string': ('guid=' + guid).encode(), 'headers': [], 'server': ('testserver', 80)})
+    first = proxy._qq_playback_redirect(request, guid, None)
+    assert 'q-mp3_128' in first.headers['location']
+    monkeypatch.setitem(proxy.CONF, 'channel_qualities', {'kugou': 'lossless'})
+    continuation = proxy._qq_playback_redirect(request, guid, 'bytes=128-')
+    assert 'q-mp3_128' in continuation.headers['location']
+    assert 'q-lossless' in proxy._qq_playback_redirect(request, guid, None).headers['location']
+    assert proxy.song_id_from_online_guid(guid + ':q-lossless') == 'kugou:' + 'a' * 32 + ':12'
+    assert proxy._qq_delivery_guid(guid + ':q-mp3_128') == guid + ':q-mp3_128'
+    proxy._QQ_PLAY_PINS.clear()
+
+
+def test_console_netease_can_run_beside_musicdl_without_changing_engine(monkeypatch):
+    monkeypatch.setitem(proxy.CONF, 'netease_enabled', False)
+    monkeypatch.setitem(proxy.CONF, 'netease_playlist_resident', False)
+    monkeypatch.setitem(proxy.CONF, 'musicdl_enabled', True)
+    monkeypatch.setitem(proxy.CONF, 'console_netease_enabled', True)
+    assert proxy._netease_runtime_usable()
+    assert proxy._source_enabled('online:netease:42')

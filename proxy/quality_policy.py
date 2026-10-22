@@ -5,6 +5,7 @@ SETTING = 'FNMUSIC_CHANNEL_QUALITIES'
 LX_PLATFORMS = {'kg': '酷狗音乐', 'kw': '酷我音乐', 'wy': '网易云音乐', 'mg': '咪咕音乐'}
 OPTIONS = {
     'qq': ('master', 'lossless', 'mp3_320', 'mp3_128'),
+    'kugou': ('lossless', 'mp3_320', 'mp3_128'),
     'netease': ('jymaster', 'hires', 'lossless', 'exhigh', 'higher', 'standard'),
     **{f'lx:{source}': ('lossless', 'high', 'standard') for source in LX_PLATFORMS},
 }
@@ -61,10 +62,10 @@ def quality_channels(values):
     known = set()
     for channel, name, client in common:
         known.update((channel, client))
-        add(channel, name, '平台直连', yes('FNMUSIC_MUSICDL_ENABLED') and bool(sources & {channel, client}), channel == 'qq')
+        add(channel, name, '平台直连', yes('FNMUSIC_MUSICDL_ENABLED') and bool(sources & {channel, client}), channel in ('qq', 'kugou'))
     for source in sorted(sources - known):
         add('musicdl:' + source, source.removesuffix('MusicClient'), '聚合音源', yes('FNMUSIC_MUSICDL_ENABLED'), False)
-    add('netease', '网易云音乐', '网易账号音源', yes('FNMUSIC_NETEASE_ENABLED') or yes('FNMUSIC_NETEASE_PLAYLIST_RESIDENT'))
+    add('netease', '网易云音乐', '网易账号音源', yes('FNMUSIC_NETEASE_ENABLED') or yes('FNMUSIC_NETEASE_PLAYLIST_RESIDENT') or yes('FNMUSIC_CONSOLE_NETEASE_ENABLED'))
     aliases = {'kugou': 'kg', 'kuwo': 'kw', 'netease': 'wy', '163': 'wy', 'migu': 'mg'}
     selected = {aliases.get(part.strip(), part.strip()) for part in (values.get('LX_SOURCES') or 'kg,wy,mg,kw').split(',')}
     for source, name in LX_PLATFORMS.items():

@@ -120,9 +120,10 @@ sys.exit(0 if needed else 1)'
 }
 
 if [ "$(env_flag FNMUSIC_NETEASE_ENABLED)" != "true" ] \
-   && [ "$(env_flag FNMUSIC_NETEASE_PLAYLIST_RESIDENT)" = "true" ] \
-   && { public_musicbox_selected \
-        || { [ "$(env_flag FNMUSIC_NETEASE_MY_PLAYLISTS)" = "true" ] && musicbox_cookie_present; }; }; then
+   && { [ "$(env_flag FNMUSIC_CONSOLE_NETEASE_ENABLED)" = "true" ] \
+        || { [ "$(env_flag FNMUSIC_NETEASE_PLAYLIST_RESIDENT)" = "true" ] \
+             && { public_musicbox_selected \
+                  || { [ "$(env_flag FNMUSIC_NETEASE_MY_PLAYLISTS)" = "true" ] && musicbox_cookie_present; }; }; }; }; then
     start_prog musicbox
 fi
 

@@ -350,7 +350,7 @@ def search_web_fallback(keyword: str, stype: str = "song", limit: int = 20, offs
     res = None
     try:
         if httpx is not None:
-            with httpx.Client(timeout=10.0) as client:
+            with httpx.Client(timeout=10.0, trust_env=False) as client:
                 resp = client.post(url, headers=headers, data=data)
                 resp.raise_for_status()
                 res = resp.json()

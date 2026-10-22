@@ -219,6 +219,46 @@ def search(
     return {"ok": True, "code": 200, "data": []}
 
 
+def _catalog_song(row):
+    if not isinstance(row, dict):
+        return None
+    sid = str(row.get('song_id') or row.get('id') or '')
+    if not sid.isdigit() or int(sid) <= 0:
+        return None
+    artists = row.get('ar') or row.get('artists') or []
+    album = row.get('al') or row.get('album') or {}
+    return {'id': 'netease:' + sid, 'source': 'netease', 'title': row.get('name') or row.get('title') or '',
+            'artist': row.get('artist') or ' / '.join(str(a.get('name') or '') for a in artists if isinstance(a, dict)),
+            'album': album.get('name', '') if isinstance(album, dict) else album,
+            'duration_s': row.get('duration_s') or (row.get('dt') or row.get('duration') or 0) / 1000,
+            'cover_url': row.get('album_pic_url') or row.get('cover_url') or (album.get('picUrl') if isinstance(album, dict) else '') or ''}
+
+
+@app.get('/api/v1/catalog/search')
+def catalog_search(q: str = Query(..., min_length=1, max_length=200), page: int = Query(1, ge=1, le=100)):
+    # Catalog browsing must not resolve/probe every song's audio first.
+    try:
+        rows = search_web_fallback(q.strip(), stype='song', limit=20, offset=(page - 1) * 20)
+    except Exception:
+        raise HTTPException(503, '网易云搜索暂不可用，请稍后重试') from None
+    items = [item for row in rows if (item := _catalog_song(row))]
+    return {'ok': True, 'items': items, 'has_more': len(rows) == 20}
+
+
+@app.get('/api/v1/catalog/recommend')
+def catalog_recommend(cursor: int = Query(0, ge=0, le=1000)):
+    if not check_is_logged_in():
+        raise HTTPException(401, '请先登录网易云音乐账号')
+    try:
+        data = _extract_payload(exec_musicbox(['recommend', 'songs', '--limit', '60', '--json']))
+    except (UpstreamException, MusicboxTimeoutError):
+        raise HTTPException(503, '网易云每日推荐暂不可用，请验证账号或稍后重试') from None
+    rows = data if isinstance(data, list) else data.get('dailySongs') or data.get('recommend') or [] if isinstance(data, dict) else []
+    items = [item for row in rows if (item := _catalog_song(row))]
+    start = cursor * 10
+    return {'ok': True, 'items': items[start:start + 10], 'next_cursor': cursor + 1, 'has_more': start + 10 < len(items)}
+
+
 @app.get("/api/v1/song/{song_id}/url")
 async def song_url(song_id: int = Path(..., ge=1), quality: str = Query("exhigh"), fresh: int = Query(0)):
     if quality not in QUALITY_WHITELIST:
@@ -487,6 +527,19 @@ def auth_login():
     if unikey and isinstance(payload, dict):
         payload["qr_url"] = f"https://music.163.com/login?codekey={unikey}"
     return data
+
+
+@app.post('/api/v1/auth/verify')
+def auth_verify():
+    reset_api('account verification')
+    return {'ok': True, 'verified': check_is_logged_in()}
+
+
+@app.post('/api/v1/auth/logout')
+def auth_logout():
+    result = exec_musicbox(['auth', 'logout', '--yes', '--json'])
+    reset_api('account logout')
+    return result
 
 
 @app.get("/api/v1/auth/login/check")

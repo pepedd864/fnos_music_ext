@@ -24,8 +24,7 @@ body { margin: 0; overflow: hidden; background: #f5f5f5; }
 .song-name { max-width: 245px; min-width: 0; }
 .title-button { padding: 0; height: auto; white-space: normal; text-align: left; font-weight: 500; color: #262626; }
 .subline { display: block; margin-top: 5px; font-size: 13px; line-height: 1.6; }
-.library-footer { position: sticky; bottom: 0; z-index: 4; margin-top: 16px; padding: 16px 0 0; background: #f5f5f5; border-top: 1px solid #e8e8e8; }
-.library-note { margin: 12px 0 0; padding-bottom: 16px; font-size: 13px; }
+.library-footer { position: sticky; bottom: 0; z-index: 4; margin-top: 16px; padding: 16px 0; background: #f5f5f5; border-top: 1px solid #e8e8e8; }
 .platform-card { height: 100%; }
 .platform-card .ant-card-head { padding-top: 8px; padding-bottom: 8px; }
 .file-card .ant-card-body { padding: 16px; }

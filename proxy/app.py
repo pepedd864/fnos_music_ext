@@ -104,6 +104,7 @@ CONF = {
     "lx_url": os.environ.get("FNMUSIC_LX_URL", "http://127.0.0.1:8772"),
     "musicdl_enabled": os.environ.get("FNMUSIC_MUSICDL_ENABLED", "false").lower() in ("true", "1", "yes"),
     "netease_enabled": os.environ.get("FNMUSIC_NETEASE_ENABLED", "false").lower() in ("true", "1", "yes"),
+    "console_netease_enabled": os.environ.get("FNMUSIC_CONSOLE_NETEASE_ENABLED", "false").lower() in ("true", "1", "yes"),
     "lx_enabled": os.environ.get("FNMUSIC_LX_ENABLED", "false").lower() in ("true", "1", "yes"),
     "lx_search_limit": int(os.environ.get("FNMUSIC_LX_SEARCH_LIMIT", "20")),
     "lx_quality": os.environ.get("FNMUSIC_LX_QUALITY", "lossless"),
@@ -528,6 +529,7 @@ _ENV_WATCH_KEYS: dict[str, tuple[str, str]] = {
     "FNMUSIC_QUALITY_MODE": ("quality_mode", "quality_mode"),
     "FNMUSIC_QQ_QUALITY": ("qq_quality", "qq_quality"),
     "FNMUSIC_CHANNEL_QUALITIES": ("channel_qualities", "channel_qualities"),
+    "FNMUSIC_CONSOLE_NETEASE_ENABLED": ("console_netease_enabled", "bool"),
     "FNMUSIC_ROAM_SOURCE": ("roam_source", "roam_source"),
     "FNMUSIC_NETEASE_QUALITY": ("netease_quality", "netease_quality"),
     "FNMUSIC_DL_QUALITY": ("dl_quality", "dl_quality"),
@@ -798,10 +800,9 @@ def _netease_runtime_usable() -> bool:
     """网易盒子歌单/播放运行期链路可用性：当前音源是网易盒子，或网易云歌单常驻生效。
 
     只覆盖歌单注入与已登记网易曲目（播放/歌词/取链等）的放行口径；
-    搜索聚合（_aggregate_search/深分页/专辑搜索）仍只看 netease_enabled——
-    常驻模式下搜索结果不聚合网易（issue #38 需求 1）。
+    账号歌单常驻不自动参与搜索；管理台单独启用网易渠道时，搜索与其他音源并行。
     """
-    return bool(CONF.get("netease_enabled")) or bool(CONF.get("netease_playlist_resident"))
+    return bool((CONF.get("netease_enabled") or CONF.get("console_netease_enabled"))) or bool(CONF.get("netease_playlist_resident"))
 
 
 def _source_enabled(guid: str) -> bool:
@@ -1062,7 +1063,7 @@ def source_from_online_guid(guid: str) -> str:
 # Delivery identities are private to playback/storage, not new catalog tracks.
 # Keeping the preference in the URL and disk key prevents old FLAC/MP3 byte
 # offsets or a saved lower tier from being reused after changing preferences.
-_QQ_DELIVERY_RE = re.compile(r"^(online:qq:[A-Za-z0-9]{1,64}):q-(high|balanced|smooth|master|lossless|mp3_320|mp3_128)$")
+_QQ_DELIVERY_RE = re.compile(r"^((?:online:qq:[A-Za-z0-9]{1,64}|online:kugou:[a-fA-F0-9]{32}(?::\d{1,20})?)):q-(high|balanced|smooth|master|lossless|mp3_320|mp3_128)$")
 _QQ_PLAY_PINS: dict[tuple[str, str], tuple[str, str, float]] = {}
 
 
@@ -1077,25 +1078,28 @@ def _qq_delivery_quality(guid: str) -> str:
 
 
 def _qq_delivery_guid(guid: str, *, standard: bool = False) -> str:
-    if source_from_online_guid(guid) != "qq":
+    if source_from_online_guid(guid) not in ("qq", "kugou"):
         return guid
     if not standard and _qq_delivery_quality(guid):
         return guid
-    if not re.fullmatch(r"online:qq:[A-Za-z0-9]{1,64}", _qq_base_guid(guid)):
+    if not re.fullmatch(r"online:(?:qq:[A-Za-z0-9]{1,64}|kugou:[a-fA-F0-9]{32}(?::\d{1,20})?)", _qq_base_guid(guid)):
         return guid
-    quality = "mp3_320" if standard else str(CONF.get('channel_qualities', {}).get('qq', CONF.get('qq_quality')) or 'auto')
+    channel = source_from_online_guid(guid)
+    quality = "mp3_320" if standard else str(CONF.get('channel_qualities', {}).get(channel, CONF.get('qq_quality') if channel == 'qq' else 'auto') or 'auto')
     if quality == "auto":
         quality = str(CONF.get("quality_mode") or "high")
     if quality not in {"high", "balanced", "smooth", "master", "lossless", "mp3_320", "mp3_128"}:
         quality = "high"
+    if channel == "kugou":
+        quality = {"high": "lossless", "master": "lossless", "balanced": "mp3_320", "smooth": "mp3_128"}.get(quality, quality)
     return f"{_qq_base_guid(guid)}:q-{quality}"
 
 
 def _qq_playback_redirect(request: Request, guid: str, range_header: str | None) -> Response | None:
-    if source_from_online_guid(guid) != "qq" or _qq_delivery_quality(guid):
+    if source_from_online_guid(guid) not in ("qq", "kugou") or _qq_delivery_quality(guid):
         return None
-    if not re.fullmatch(r"online:qq:[A-Za-z0-9]{1,64}", guid):
-        return JSONResponse(content={"code": 400, "msg": "无效的 QQ 歌曲编号", "data": None}, status_code=400)
+    if not re.fullmatch(r"online:(?:qq:[A-Za-z0-9]{1,64}|kugou:[a-fA-F0-9]{32}(?::\d{1,20})?)", guid):
+        return JSONResponse(content={"code": 400, "msg": "无效的平台歌曲编号", "data": None}, status_code=400)
     now = time.monotonic()
     key = (_credential_scope(request), guid)
     pinned = _QQ_PLAY_PINS.get(key)
@@ -4449,7 +4453,7 @@ async def _aggregate_search(request: Request, keyword: str, entry: dict) -> None
         return
     token = _FETCH_SCOPE.set(scope)
     factories = []
-    if CONF.get("netease_enabled"):
+    if CONF.get("netease_enabled") or CONF.get("console_netease_enabled"):
         factories.append(lambda: fetch_musicbox_search(get_musicbox_client(request.app), keyword, CONF["netease_search_limit"]))
     if CONF.get("musicdl_enabled"):
         factories.append(lambda: fetch_musicdl_search(get_musicdl_client(request.app), keyword, CONF["online_limit"]))
@@ -4601,7 +4605,7 @@ async def _extend_search(request: Request, keyword: str, entry: dict) -> None:
                 get_musicdl_client(request.app), keyword, CONF["online_limit"],
                 sources="QQMusicClient", page=cursors.get("qq", 1) + 1)))
 
-        if CONF.get("netease_enabled") and "netease" not in exhausted:
+        if (CONF.get("netease_enabled") or CONF.get("console_netease_enabled")) and "netease" not in exhausted:
             limit = int(CONF["netease_search_limit"])
             n_cursor = cursors.get("netease", 1)
             fetches.append(("netease", _musicbox_search_request(
@@ -5500,11 +5504,11 @@ async def _open_online_stream(request: Request, guid: str, range_header: str | N
             client = get_musicdl_client(request.app)
             via_musicdl = True
             params = {"id": song_id_from_online_guid(guid), "proxy": "true"}
-            if source == "qq":
+            if source in ("qq", "kugou"):
                 params["quality"] = _qq_delivery_quality(_qq_delivery_guid(guid))
             # 无损档已被判定损坏的曲目（或上层明确要求）直接取 mp3 档；
             # 带断点续传的请求不切档——前后字节必须来自同一条流
-            if source != "qq" and (force_mp3 or _lossless_is_blacklisted(guid)) and not range_header:
+            if source not in ("qq", "kugou") and (force_mp3 or _lossless_is_blacklisted(guid)) and not range_header:
                 params["quality"] = "mp3"
             req = client.build_request("GET", "/stream", params=params, headers=headers)
         try:
@@ -6640,7 +6644,7 @@ async def _transcode_source(request: Request, guid: str) -> "tuple[str | None, d
                 return None, None
             return str(resolved["url"]), _lx_media_headers(resolved)
         url = f"{str(CONF['musicdl_url']).rstrip('/')}/stream?id={quote(song_id_from_online_guid(guid))}&proxy=true"
-        if source == "qq":
+        if source in ("qq", "kugou"):
             url += "&quality=" + quote(_qq_delivery_quality(_qq_delivery_guid(guid)))
         elif _lossless_is_blacklisted(guid):
             # issue #46 音质降级：无损流损坏拉黑后降级 mp3，留档实际交付格式
@@ -7169,7 +7173,7 @@ async def _fetch_online_info(request: Request, guid: str, include_lyric: bool = 
     song_id = song_id_from_online_guid(guid)
     try:
         params = {"id": song_id, "include_lyric": str(include_lyric).lower()}
-        if src == "qq":
+        if src in ("qq", "kugou"):
             params["quality"] = _qq_delivery_quality(_qq_delivery_guid(guid))
         r = await musicdl_client.get("/info", params=params, timeout=10.0)
         if r.status_code == 200:

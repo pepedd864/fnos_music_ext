@@ -24,7 +24,7 @@ import urllib.request
 import uuid
 
 MEDIA_EXTENSIONS = {'.mp3', '.flac', '.m4a', '.aac', '.ogg', '.opus', '.wav', '.aiff', '.ape', '.wma', '.alac'}
-PLATFORMS = {'qq', 'kugou', 'kuwo'}
+PLATFORMS = {'qq', 'kugou', 'kuwo', 'netease'}
 QUALITY = {'mp3_128', 'mp3_320', 'lossless'}
 
 
@@ -422,13 +422,13 @@ class LibraryManager:
             tid = str(track.get('id') or '')
             if not re.fullmatch(r'[A-Za-z0-9_:.-]{1,180}', tid):
                 raise LibraryError('歌曲标识无效')
-            allowed_prefix = {'qq': 'qq:', 'kugou': 'kugou:', 'kuwo': 'kuwo:'}[p]
+            allowed_prefix = {name: name + ':' for name in PLATFORMS}[p]
             if not tid.startswith(allowed_prefix):
                 raise LibraryError('歌曲标识与平台不匹配')
             payload = {'platform': p, 'root_id': str(payload.get('root_id') or ''), 'quality': str(payload.get('quality') or ''),
                        'track': {k: str(track.get(k) or '')[:1000] for k in ('id', 'title', 'artist', 'album')}}
             payload['track']['duration_s'] = max(0, min(float(track.get('duration_s') or 0), 86400))
-            if p != 'qq' and payload['quality'] != 'original':
+            if p == 'kuwo' and payload['quality'] != 'original':
                 raise LibraryError('该平台目前按音源实际音质保存，暂不支持指定档位')
         elif kind == 'convert':
             payload = {'file_id': str(payload.get('file_id') or ''), 'quality': str(payload.get('quality') or ''), 'root_id': str(payload.get('root_id') or '')}
@@ -587,7 +587,7 @@ class LibraryManager:
                 except Exception as exc:
                     if isinstance(exc, LibraryError):
                         raise
-                    raise LibraryError('下载失败，请重新搜索歌曲；QQ 歌曲也可尝试刷新账号') from None
+                    raise LibraryError('下载失败，请重新搜索歌曲或验证对应平台的账号') from None
                 source_meta = track
             fd = os.open(stage, os.O_RDONLY | os.O_NOFOLLOW)
             try:
@@ -600,7 +600,7 @@ class LibraryManager:
                 # Preserve reliable source identity for re-acquisition.
                 for key in ('title', 'artist', 'album'):
                     meta[key] = source_meta.get(key) or meta[key]
-                if kind == 'download' and provider == 'qq':
+                if kind == 'download' and provider in {'qq', 'kugou', 'netease'} and payload['quality'] != 'original':
                     expected = {'mp3_128': ('MP3', 128000), 'mp3_320': ('MP3', 320000), 'lossless': ('FLAC', 0)}[payload['quality']]
                     if meta['format'] != expected[0] or expected[1] and abs(meta['bitrate']-expected[1]) > 25000:
                         raise LibraryError('实际音质与所选档位不符，文件未安装')

@@ -10,6 +10,7 @@ export function patchChannelQuality(raw, channel, quality) {
 export function acquisitionQuality(platform, values, mode) {
   const allowed = platform?.capabilities?.qualities || ['original'];
   const preference = channelPreference(platform?.id, values);
-  const desired = preference === 'auto' ? { smooth: 'mp3_128', balanced: 'mp3_320', high: 'lossless' }[mode] : preference === 'master' ? 'lossless' : preference;
+  const normalized = ({ standard: 'mp3_128', higher: 'mp3_320', exhigh: 'mp3_320', hires: 'lossless', jymaster: 'lossless' })[preference] || preference;
+  const desired = normalized === 'auto' ? { smooth: 'mp3_128', balanced: 'mp3_320', high: 'lossless' }[mode] : normalized === 'master' ? 'lossless' : normalized;
   return allowed.includes(desired) ? desired : allowed.includes('original') ? 'original' : allowed[0];
 }

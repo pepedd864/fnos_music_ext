@@ -2228,10 +2228,12 @@ def test_console_platform_registry_masks_auth_and_saves_enable_without_restart(e
         response = client.get('/api/console/platforms')
         assert response.headers['cache-control'] == 'no-store'
         platforms = response.json()['items']
-        assert [p['id'] for p in platforms] == ['qq', 'kugou', 'kuwo']
+        assert [p['id'] for p in platforms] == ['qq', 'kugou', 'kuwo', 'netease']
         assert platforms[0]['status'] == '已登录'
-        assert platforms[1]['status'] == '待登录'
-        assert not platforms[1]['capabilities']['login']
+        assert platforms[1]['status'] == '已登录'
+        assert platforms[2]['status'] == '公开渠道 · 无需登录'
+        assert platforms[1]['capabilities']['login']
+        assert platforms[2]['capabilities']['recommend_kind'] == 'public'
         assert 'must-not-forward' not in response.text
         assert client.put('/api/console/platforms/qq', json={'enabled': True}).status_code == 200
         assert 'QQMusicClient' in webui.read_env()['FNMUSIC_ONLINE_SOURCES']
@@ -2242,8 +2244,8 @@ def test_console_platform_registry_masks_auth_and_saves_enable_without_restart(e
 
 def test_console_search_respects_enable_and_never_leaks_direct_url(env_file):
     def handler(request):
-        assert request.url.path == '/search'
-        assert request.url.params['sources'] == 'KuwoMusicClient'
+        assert request.url.path in ('/catalog/kuwo/search', '/catalog/kuwo/recommend')
+        if request.url.path.endswith('search'): assert request.url.params['q'] == 'abc'
         return httpx.Response(200, json={'items': [{'id': 'kuwo:123', 'title': 'Title', 'artist': 'Artist', 'download_url': 'SECRET', 'download_headers': {'Cookie': 'SECRET'}}], 'errors': {}})
     with authed_client() as client:
         _mock_http(handler)
@@ -2252,9 +2254,58 @@ def test_console_search_respects_enable_and_never_leaks_direct_url(env_file):
         assert result.status_code == 200
         assert result.json()['items'][0]['id'] == 'kuwo:123'
         assert 'SECRET' not in result.text
-        assert client.get('/api/console/platforms/kuwo/recommend').status_code == 501
+        assert client.get('/api/console/platforms/kuwo/recommend').json()['recommend_kind'] == 'public'
         assert client.get('/api/console/platforms/kuwo/search?q=abc&page=-1').status_code == 400
         assert client.post('/api/library', json={'action': 'list'}).status_code == 501
     with TestClient(webui.app) as client:
         assert client.get('/api/console/platforms').status_code == 403
         assert client.post('/api/library', json={'action': 'list'}).status_code == 403
+
+
+@pytest.mark.parametrize('pid', ['qq', 'kugou'])
+def test_console_auth_is_generic_admin_only_and_whitelists_public_fields(env_file, pid):
+    with TestClient(webui.app) as client:
+        assert client.post(f'/api/console/platforms/{pid}/auth/login', json={}).status_code == 403
+    with authed_client() as client:
+        def handler(request):
+            assert request.url.path == f'/auth/{pid}/login'
+            return httpx.Response(200, json={'image': 'data:image/png;base64,fixture', 'session_id': 'fixture', 'expires_in': 180, 'token': 'SECRET', 'cookie': 'SECRET'})
+        _mock_http(handler)
+        result = client.post(f'/api/console/platforms/{pid}/auth/login', json={})
+        assert result.status_code == 200 and 'SECRET' not in result.text
+        assert result.headers['cache-control'] == 'no-store'
+        assert client.get(f'/api/console/platforms/{pid}/auth/logout').status_code == 404
+        assert client.post(f'/api/console/platforms/{pid}/auth/credential', json={}).status_code == 404
+        assert client.post(f'/api/console/platforms/{pid}/auth/login', content='x' * 1025).status_code == 413
+
+
+def test_console_netease_parallel_enable_preserves_current_engine_and_qq_config(env_file, svctl):
+    before = webui.read_env()
+    with authed_client() as client:
+        _mock_http(lambda request: httpx.Response(200, json={'ok': True, 'data': {'logged_in': False}}))
+        assert client.put('/api/console/platforms/netease', json={'enabled': True}).status_code == 200
+        after = webui.read_env()
+        assert after['FNMUSIC_CONSOLE_NETEASE_ENABLED'] == 'true'
+        assert all(after[k] == value for k, value in before.items())
+        rows = {p['id']: p for p in client.get('/api/console/platforms').json()['items']}
+        assert rows['netease']['enabled'] and rows['netease']['status'] == '待登录'
+        assert rows['netease']['capabilities']['recommend_kind'] == 'personal'
+        assert client.post('/api/console/platforms/kuwo/auth/login', json={}).status_code == 404
+    assert not any(call[0] in ('stop', 'restart') for call in svctl.calls)
+
+
+def test_console_netease_search_and_recommend_normalize_and_filter_sensitive_fields(env_file):
+    webui.write_env({'FNMUSIC_CONSOLE_NETEASE_ENABLED': 'true'})
+    calls = []
+    def handler(request):
+        calls.append(request.url.path)
+        assert request.url.path in ('/api/v1/catalog/search', '/api/v1/catalog/recommend')
+        return httpx.Response(200, json={'items': [{'id': 'netease:42', 'title': 'Song', 'download_url': 'SECRET', 'cookie': 'SECRET'}], 'next_cursor': 1, 'has_more': False})
+    with authed_client() as client:
+        _mock_http(handler)
+        for endpoint in ('search?q=Song&page=2', 'recommend?cursor=0'):
+            result = client.get('/api/console/platforms/netease/' + endpoint)
+            assert result.status_code == 200
+            assert result.json()['items'][0]['platform'] == 'netease'
+            assert 'SECRET' not in result.text
+    assert calls == ['/api/v1/catalog/search', '/api/v1/catalog/recommend']

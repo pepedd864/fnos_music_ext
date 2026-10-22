@@ -143,7 +143,7 @@ RUN set -eu; \
     chown -R appuser:appuser /srv/lxserver
 
 # --chown+chmod：镜像权限不依赖构建上下文的 umask/属主
-COPY --chown=appuser:appuser musicdl-service/app.py musicdl-service/hardening.py musicdl-service/qq_auth.py musicdl-service/qq_catalog.py /srv/musicdl-service/
+COPY --chown=appuser:appuser musicdl-service/app.py musicdl-service/hardening.py musicdl-service/qq_auth.py musicdl-service/qq_catalog.py musicdl-service/kugou_catalog.py musicdl-service/kuwo_catalog.py /srv/musicdl-service/
 COPY --chown=appuser:appuser musicbox-service/app.py musicbox-service/runner.py musicbox-service/netease_ext.py musicbox-service/playback.py /srv/musicbox-service/
 COPY --chown=appuser:appuser lxmusic-service/app.py lxmusic-service/lxserver_client.py lxmusic-service/verify_source.py /srv/lxmusic-service/
 COPY --chown=appuser:appuser webui-service/app.py webui-service/console_api.py /srv/webui-service/
@@ -153,6 +153,8 @@ COPY --chown=appuser:appuser proxy/__init__.py proxy/env_merge.py proxy/fnlog.py
 RUN find /srv -name "*.py" -exec chmod 0644 {} + \
     && mkdir -p /repo \
     && chmod 0755 /repo /data
+
+COPY THIRD_PARTY_NOTICES.md /srv/THIRD_PARTY_NOTICES.md
 
 COPY container/supervisord.conf /etc/supervisor/supervisord.conf
 COPY container/env_flag.sh container/entrypoint.sh container/healthcheck.sh /usr/local/bin/

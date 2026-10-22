@@ -37,6 +37,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from hardening import AdaptiveTimeout, SearchCache, SourceBreaker, SingleFlight, SourceBulkhead, SourceBusy, SearchProgress  # noqa: E402
 from qq_auth import QQAuth, AuthError  # noqa: E402
 from qq_catalog import QQCatalog, CatalogError, validate_quality  # noqa: E402
+from kugou_catalog import KugouCatalog  # noqa: E402
+from kuwo_catalog import catalog as kuwo_catalog  # noqa: E402
 from pydantic import BaseModel, Field  # noqa: E402
 
 # 复用仓库根（容器内 /srv）的 proxy.env_merge 解析 .env；独立运行无仓库结构时退回纯环境变量
@@ -140,6 +142,7 @@ def _qq_auth_changed():
 
 QQ_AUTH = QQAuth(on_change=_qq_auth_changed)
 QQ_CATALOG = QQCatalog(QQ_AUTH)
+KUGOU = KugouCatalog()
 
 
 def _source_short(client_name: str) -> str:
@@ -221,6 +224,12 @@ def _cache_get(song_id: str):
 
 def _search_one_source(source: str, keyword: str, limit: int) -> list:
     """单个源搜索（工作线程内执行，阻塞）。"""
+    if source in ('KugouMusicClient', 'KuwoMusicClient'):
+        from types import SimpleNamespace
+        result = asyncio.run(KUGOU.search(keyword, limit=min(limit, 20)) if source == 'KugouMusicClient' else kuwo_catalog('search', keyword))
+        return [SimpleNamespace(source=source, identifier=item['id'].split(':', 1)[1], song_name=item['title'],
+                                singers=item['artist'], album=item['album'], duration_s=item['duration_s'],
+                                cover_url=item['cover_url'], resolve_on_play=True) for item in result['items'][:limit]]
     auth_cfg = {}
     if source == "QQMusicClient":
         cookies = QQ_AUTH.cookies()
@@ -263,6 +272,7 @@ def _normalize(song, keyword: str) -> dict:
         # qq 曲目的专辑封面主键：封面兜底链用 albummid 直构 gtimg 图床 URL
         "albummid": str(getattr(song, "albummid", "") or getattr(song, "album_mid", "") or ""),
         "download_url": getattr(song, "download_url", "") or "",
+        "resolve_on_play": bool(getattr(song, "resolve_on_play", False)),
     }
 
 
@@ -289,6 +299,8 @@ def _is_candidate_playable(song, item: dict) -> bool:
         return False
     if any(marker in title for marker in TRIAL_MARKERS):
         return False
+    if item.get('resolve_on_play'):
+        return True
     url = str(item.get("download_url") or "").strip()
     if not url or not url.startswith(("http://", "https://")):
         return False
@@ -385,6 +397,13 @@ def _search_playable(source: str, keyword: str, fetch_size: int, limit: int,
     valid = set()
     futures = {}
     for idx, (item, headers, _) in enumerate(candidates):
+        if item.get('resolve_on_play'):
+            valid.add(idx)
+            if progress is not None:
+                progress.append(candidates[idx])
+            if len(valid) >= limit:
+                break
+            continue
         futures[_PROBE_POOL.submit(_probe_playable_sync, item["download_url"], headers)] = idx
     try:
         wait_budget = None if deadline is None else max(0.1, deadline - time.monotonic())
@@ -644,7 +663,38 @@ async def _resolve_qq(song_id: str, quality="", force=False):
 async def _resolve_entry(song_id: str, auto_refresh: bool = True, quality: str = ""):
     if song_id.startswith("qq:"):
         return await _resolve_qq(song_id, quality)
+    if KUGOU.accepts(song_id):
+        if not quality and parse_env_file is not None:
+            from proxy.quality_policy import channel_preference
+            values = dict(parse_env_file(Path(os.environ.get('FNMUSIC_ENV_FILE', '/repo/.env')))[0])
+            preference = channel_preference(values, 'kugou')
+            quality = preference if preference != 'auto' else {'smooth': 'mp3_128', 'balanced': 'mp3_320', 'high': 'lossless'}.get(values.get('FNMUSIC_QUALITY_MODE'), 'mp3_128')
+        resolved = await KUGOU.resolve(song_id, 'mp3_128' if quality == 'mp3' else quality)
+        return {**resolved, 'item': {**((_cache_get(song_id) or {}).get('item') or {}), **resolved['item']}}
+    if re.fullmatch(r'netease:\d{1,20}', song_id):
+        level = {'': 'standard', 'mp3_128': 'standard', 'mp3_320': 'exhigh', 'lossless': 'lossless'}.get(quality)
+        if not level:
+            raise HTTPException(400, '不支持的网易云音质')
+        base = os.environ.get('MUSICDL_MUSICBOX_URL', 'http://127.0.0.1:8002').rstrip('/')
+        try:
+            async with httpx.AsyncClient(trust_env=False, timeout=35) as cx:
+                response = await cx.get(f'{base}/api/v1/song/{song_id.split(":")[1]}/url', params={'quality': level})
+                data = response.json().get('data') or {}
+        except (httpx.HTTPError, ValueError):
+            raise HTTPException(503, '网易云服务暂不可达，请检查平台是否启用') from None
+        url = data.get('url') or ''
+        if response.status_code != 200 or not url.startswith(('https://', 'http://')):
+            raise HTTPException(403, '当前网易云账号没有该歌曲或音质的完整播放权限')
+        return {'item': {'id': song_id, 'source': 'netease', 'download_url': url,
+                         'ext': data.get('type') or ('flac' if level == 'lossless' else 'mp3')},
+                'download_headers': {}, 'ts': time.time(), 'keyword': ''}
     entry = _cache_get(song_id)
+    if entry and entry['item'].get('resolve_on_play') and re.fullmatch(r'kuwo:\d{1,20}', song_id):
+        resolved = await asyncio.to_thread(_kuwo_force_mp3_url_sync, song_id)
+        if not resolved:
+            raise HTTPException(403, '酷我未返回当前歌曲的可用音频，请选择其他歌曲或平台')
+        url, headers = resolved
+        return {**entry, 'item': {**entry['item'], 'download_url': url, 'ext': 'mp3'}, 'download_headers': headers}
     if entry is None:
         raise HTTPException(404, f"unknown song id {song_id!r}: cache expired or service restarted; re-search keyword and source once, then retry")
     fresh = entry["item"].get("download_url") and (time.time() - entry["ts"]) < CONF["url_ttl"]
@@ -740,6 +790,37 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="musicdl-service", lifespan=lifespan)
+
+
+@app.api_route('/auth/kugou/{operation:path}', methods=['GET', 'POST'])
+async def kugou_auth(operation: str, request: Request):
+    methods = {'status': 'GET', 'login': 'POST', 'login/check': 'POST', 'verify': 'POST', 'logout': 'POST'}
+    if methods.get(operation) != request.method:
+        raise HTTPException(404, '未知账号操作')
+    if operation == 'status':
+        result = KUGOU.status()
+    elif operation == 'login/check':
+        if len(await request.body()) > 1024:
+            raise HTTPException(413, '请求过大')
+        result = await KUGOU.check((await request.json()).get('session_id'))
+    else:
+        result = await getattr(KUGOU, operation)()
+    return JSONResponse(result, headers={'Cache-Control': 'no-store'})
+
+
+@app.get('/catalog/{platform}/{operation}')
+async def platform_catalog(platform: str, operation: str, q: str = '', page: int = Query(1, ge=1, le=100), cursor: int = Query(0, ge=0, le=1000)):
+    if platform not in ('kugou', 'kuwo') or operation not in ('search', 'recommend'):
+        raise HTTPException(404, '未知目录接口')
+    if operation == 'search' and not 1 <= len(q.strip()) <= 200:
+        raise HTTPException(400, '请输入 1 至 200 字的搜索词')
+    if platform == 'kugou':
+        result = await (KUGOU.search(q.strip(), page) if operation == 'search' else KUGOU.recommend(cursor))
+    else:
+        result = await kuwo_catalog(operation, q.strip(), page if operation == 'search' else cursor + 1)
+    for item in result['items']:
+        _cache_put(item, f"{item['title']} {item['artist']}", {}, '')
+    return JSONResponse(result, headers={'Cache-Control': 'no-store'})
 
 
 class QQLoginRequest(BaseModel):
@@ -1104,7 +1185,7 @@ async def stream(
     if not url:
         raise HTTPException(502, f"no playable url for {id}")
     async def prepare(entry, url):
-        if id.startswith("qq:"):
+        if id.startswith(("qq:", "netease:")) or KUGOU.accepts(id):
             # Authorized ordinary QQ formats do not need the Kuwo corruption
             # workaround's 3 MiB download + ffmpeg probe before each first play.
             return url, {**entry.get("download_headers", {}), **({"Range": range_header} if range_header else {})}
@@ -1112,6 +1193,10 @@ async def stream(
     url, src_headers = await prepare(entry, url)
 
     async def refresh():
+        if id.startswith('netease:') or KUGOU.accepts(id):
+            if KUGOU.accepts(id):
+                KUGOU.resolved.pop((id, quality or 'mp3_128', KUGOU.generation), None)
+            return await _resolve_entry(id, quality=quality)
         return (await _resolve_qq(id, quality, force=True) if id.startswith("qq:")
                 else await _refresh_by_keyword(id))
     if not proxy:

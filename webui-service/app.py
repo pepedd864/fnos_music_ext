@@ -349,6 +349,8 @@ def _resident_flag(values: dict[str, str]) -> bool:
 
 def _resident_active(values: dict[str, str]) -> bool:
     """常驻生效判定：账号歌单或至少一份网易公共歌单需要 musicbox 供数。"""
+    if str(values.get("FNMUSIC_CONSOLE_NETEASE_ENABLED", "")).lower() in ("true", "1", "yes"):
+        return True
     if not _resident_flag(values):
         return False
     account = str(values.get("FNMUSIC_NETEASE_MY_PLAYLISTS", "")).strip().lower() in ("true", "1", "yes")
@@ -374,6 +376,8 @@ def _public_selection_rows(values: dict[str, str]) -> list:
     return selection if isinstance(selection, list) else []
 
 def _public_musicbox_needed(values: dict[str, str]) -> bool:
+    if str(values.get("FNMUSIC_CONSOLE_NETEASE_ENABLED", "")).lower() in ("true", "1", "yes"):
+        return True
     if not str(values.get("FNMUSIC_PUBLIC_PLAYLISTS_ENABLED", "")).strip().lower() in ("true", "1", "yes"):
         return False
     return any(

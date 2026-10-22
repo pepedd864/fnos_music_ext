@@ -51,3 +51,13 @@ test('recommendation cursor stays separate from search page and query', () => {
   assert.equal(search.query, '搜索内容');
   assert.deepEqual(emptyDiscovery('kuwo').items, []);
 });
+
+test('public recommendations need no account and NetEase settings map to download tiers', async () => {
+  const { acquisitionQuality } = await import('../src/quality-model.js');
+  const publicPlatform = { id: 'kuwo', enabled: true, capabilities: { recommend: true, login: false, recommend_kind: 'public' } };
+  assert.equal(platformBlock(publicPlatform, 'recommend'), '');
+  assert.equal(discoveryRequest('recommend', publicPlatform, emptyDiscovery()).path, '/api/console/platforms/kuwo/recommend?cursor=0');
+  const netease = { id: 'netease', capabilities: { qualities: ['mp3_128', 'mp3_320', 'lossless'] } };
+  assert.equal(acquisitionQuality(netease, { FNMUSIC_CHANNEL_QUALITIES: '{"netease":"standard"}' }, 'high'), 'mp3_128');
+  assert.equal(acquisitionQuality(netease, { FNMUSIC_CHANNEL_QUALITIES: '{"netease":"hires"}' }, 'smooth'), 'lossless');
+});

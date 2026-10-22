@@ -22,3 +22,5 @@ proxy/*
 **/node_modules/
 webui-service/prototype-console/
 webui-service/console/
+
+!THIRD_PARTY_NOTICES.md

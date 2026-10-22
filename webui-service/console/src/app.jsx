@@ -22,7 +22,7 @@ const { Title, Text, Paragraph } = Typography;
 const BASE = location.pathname.startsWith('/app/fnmusic-ext') ? '/app/fnmusic-ext' : '';
 const qualities = [{ value: 'mp3_128', label: '一般 · MP3 128k' }, { value: 'mp3_320', label: '高品质 · MP3 320k' }, { value: 'lossless', label: '无损 · FLAC' }, { value: 'original', label: '音源实际音质' }];
 const qualityLabel = value => qualities.find(q => q.value === value)?.label || '自动';
-const names = { qq: 'QQ 音乐', kugou: '酷狗音乐', kuwo: '酷我音乐' };
+const names = { qq: 'QQ 音乐', kugou: '酷狗音乐', kuwo: '酷我音乐', netease: '网易云音乐' };
 const duration = seconds => `${Math.floor((seconds || 0) / 60)}:${String(Math.floor((seconds || 0) % 60)).padStart(2, '0')}`;
 const bytes = n => `${((n || 0) / 1048576).toFixed(1)} MB`;
 const rate = file => file.bitrate ? `${Math.round(file.bitrate / 1000)}k` : file.sample_rate ? `${file.sample_rate / 1000} kHz` : '';
@@ -105,24 +105,24 @@ function Library({ m }) {
         onKeyDown: event => { if (event.target === event.currentTarget && ['Enter', ' '].includes(event.key)) { event.preventDefault(); m.setSelected(song.id); } },
       })} locale={{ emptyText: <Empty description={m.roots.length ? '没有匹配的歌曲，扫描曲库后会显示音频文件' : '先添加一个音乐目录'}>{!m.roots.length && <Button type="primary" onClick={() => m.navigate('directories')}>添加音乐目录</Button>}</Empty> }} />
       <div ref={footerRef} className="library-footer"><Pagination current={m.pageNumber} pageSize={50} total={m.data?.total || 0} onChange={m.setPageNumber} showSizeChanger={false} />
-      <Paragraph type="secondary" className="library-note">同一录音的不同音质聚合展示；Live、伴奏等版本独立保留。</Paragraph></div>
+      </div>
     </>
   </>;
 }
 function Platforms({ m }) {
   return <Space direction="vertical" size={24} style={{ width: '100%' }}>
     <Flex justify="space-between" align="center" wrap gap={12}><Text type="secondary">常用平台优先展示，按需启用。</Text><Button icon={<SettingOutlined />} onClick={() => m.navigate('playback-settings')}>音质设置</Button></Flex>
-    <Row gutter={[20, 20]}>{m.platforms.map(p => <Col xs={24} lg={8} key={p.id}><Card className="platform-card" title={<Space size={12}><PlatformLogo platform={p} /><Text strong>{p.name}</Text></Space>} extra={<Switch checked={p.enabled} loading={m.busy === p.id} aria-label={`${p.enabled ? '停用' : '启用'}${p.name}`} onChange={value => m.togglePlatform(p, value)} />}>
-      <Space direction="vertical" size={18} style={{ width: '100%' }}><Badge status={p.auth?.logged_in ? 'success' : p.status === '登录已过期' ? 'warning' : 'default'} text={p.status} /><Flex justify="space-between" align="center"><Tag color={p.enabled ? 'blue' : 'default'}>{p.enabled ? '参与搜歌' : '尚未启用'}</Tag><Button type="link" onClick={() => m.setAccount(p.id)}>{p.auth?.logged_in ? '管理账号' : '登录'}<LinkOutlined /></Button></Flex></Space>
+    <Row gutter={[20, 20]}>{m.platforms.map(p => <Col xs={24} lg={12} xl={6} key={p.id}><Card className="platform-card" title={<Space size={12}><PlatformLogo platform={p} /><Text strong>{p.name}</Text></Space>} extra={<Switch checked={p.enabled} loading={m.busy === p.id} aria-label={`${p.enabled ? '停用' : '启用'}${p.name}`} onChange={value => m.togglePlatform(p, value)} />}>
+      <Space direction="vertical" size={18} style={{ width: '100%' }}><Badge status={p.auth?.logged_in ? 'success' : p.status === '登录已过期' ? 'warning' : 'default'} text={p.status} /><Flex justify="space-between" align="center"><Tag color={p.enabled ? 'blue' : 'default'}>{p.enabled ? '参与搜歌' : '尚未启用'}</Tag><Button type="link" onClick={() => m.setAccount(p.id)}>{p.auth?.logged_in ? '管理账号' : p.capabilities.login ? '登录' : '接入说明'}<LinkOutlined /></Button></Flex></Space>
     </Card></Col>)}</Row>
-    <Collapse items={[{ key: 'sources', label: '其他来源与高级接入', children: <Space direction="vertical" size={14}><Space><CloudOutlined /><Text>网易云音乐</Text></Space><Space><CloudOutlined /><Text>洛雪自定义源</Text></Space><Button onClick={() => m.navigate('source-settings')} icon={<SettingOutlined />}>音源设置</Button></Space> }]} />
+    <Collapse items={[{ key: 'sources', label: '其他来源与高级接入', children: <Space direction="vertical" size={14}><Space><CloudOutlined /><Text>洛雪自定义源</Text></Space><Button onClick={() => m.navigate('source-settings')} icon={<SettingOutlined />}>音源设置</Button></Space> }]} />
   </Space>;
 }
 function Account({ m }) {
   const p = m.platforms.find(p => p.id === m.account);
   const [qr, setQr] = useState(null), [state, setState] = useState(''), [busy, setBusy] = useState(false), [kind, setKind] = useState('qq');
   const epoch = useRef(0);
-  useEffect(() => { epoch.current++; setQr(null); setState(''); setBusy(false); return () => { epoch.current++; }; }, [m.account]);
+  useEffect(() => { epoch.current++; setQr(null); setState(''); setBusy(false); setKind(p?.capabilities?.login_options?.[0]?.value || 'app'); return () => { epoch.current++; }; }, [m.account]);
   useEffect(() => {
     if (!qr) return;
     const version = epoch.current;
@@ -132,7 +132,7 @@ function Account({ m }) {
       if (version !== epoch.current) return;
       if (Date.now() > deadline) { setState('二维码已过期，请重新生成'); setQr(null); return; }
       try {
-        const result = await api('/api/qq/auth/login/check', { session_id: qr.session_id });
+        const result = await api(`/api/console/platforms/${m.account}/auth/login/check`, { session_id: qr.session_id });
         if (version !== epoch.current) return;
         setState({ scan: '等待扫码', conf: '已扫码，请在手机上确认', done: '登录凭据已保存', timeout: '二维码已过期', refuse: '已取消授权' }[result.state] || '等待扫码');
         if (['done', 'timeout', 'refuse'].includes(result.state)) { setQr(null); await m.loadPlatforms(); return; }
@@ -145,21 +145,21 @@ function Account({ m }) {
   const login = async () => {
     const version = ++epoch.current; setBusy(true); setQr(null); setState('正在生成二维码');
     try {
-      const result = await api('/api/qq/auth/login', { kind });
+      const result = await api(`/api/console/platforms/${m.account}/auth/login`, { kind });
       if (version === epoch.current) { setQr(result); setState('请扫码并在手机上确认'); }
     } catch (err) { if (version === epoch.current) setState(err.message); }
     finally { if (version === epoch.current) setBusy(false); }
   };
-  const action = async op => { setBusy(true); setQr(null); epoch.current++; try { const r = await api('/api/qq/auth/' + op, {}); await m.loadPlatforms(); setState(op === 'logout' ? '已退出登录' : r.verified ? '账号验证成功' : '账号需要重新登录'); } catch (err) { setState(err.message); } finally { setBusy(false); } };
-  return <Modal title={p ? <Space><PlatformLogo platform={p} size={28} />{p.name} · {p.auth?.logged_in ? '账号管理' : '登录'}</Space> : '账号管理'} open={!!p} onCancel={() => { epoch.current++; m.setAccount(null); }} footer={null} destroyOnHidden>
+  const action = async op => { setBusy(true); setQr(null); epoch.current++; try { const r = await api(`/api/console/platforms/${m.account}/auth/` + op, {}); await m.loadPlatforms(); setState(op === 'logout' ? '已退出登录' : r.verified ? '账号验证成功' : '账号需要重新登录'); } catch (err) { setState(err.message); } finally { setBusy(false); } };
+  return <Modal title={p ? <Space><PlatformLogo platform={p} size={28} />{p.name} · {!p.capabilities.login ? '接入说明' : p.auth?.logged_in ? '账号管理' : '登录'}</Space> : '账号管理'} open={!!p} onCancel={() => { epoch.current++; m.setAccount(null); }} footer={null} destroyOnHidden>
     {p && <Space direction="vertical" size={20} style={{ width: '100%', marginTop: 12 }}>
       {p.capabilities.login ? <>
         <Descriptions column={1} items={[{ key: 'state', label: '登录状态', children: p.status }, { key: 'account', label: '账号', children: p.auth.account || '—' }, { key: 'expires', label: '凭据到期', children: p.auth.expires_at ? new Date(p.auth.expires_at * 1000).toLocaleString() : '由平台决定' }]} />
-        {qr && <img src={qr.image} alt="QQ 音乐登录二维码" style={{ width: 220, alignSelf: 'center' }} />}
+        {qr && <img src={qr.image} alt={`${p.name}登录二维码`} style={{ width: 220, alignSelf: 'center' }} />}
         {state && <Text role="status">{state}</Text>}
-        <Flex gap={10} wrap><Select value={kind} onChange={setKind} options={[{ value: 'qq', label: 'QQ 扫码' }, { value: 'wx', label: '微信扫码' }]} /><Button type="primary" loading={busy} onClick={login}>{qr ? '重新生成' : '扫码登录'}</Button><Button loading={busy} disabled={!p.auth.logged_in && p.auth.state !== 'expired'} onClick={() => action('verify')}>验证 / 刷新</Button>
-          <Popconfirm title="退出 QQ 音乐账号？" onConfirm={() => action('logout')}><Button danger disabled={!p.auth.logged_in && p.auth.state !== 'expired'}>退出登录</Button></Popconfirm></Flex>
-      </> : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="该平台暂未接入账号登录；启用后可尝试搜索和保存公开可用的歌曲。" />}
+        <Flex gap={10} wrap><Select value={kind} onChange={setKind} options={p.capabilities.login_options || []} /><Button type="primary" loading={busy} onClick={login}>{qr ? '重新生成' : '扫码登录'}</Button><Button loading={busy} disabled={!p.auth.logged_in && p.auth.state !== 'expired'} onClick={() => action('verify')}>验证 / 刷新</Button>
+          <Popconfirm title={`退出${p.name}账号？`} onConfirm={() => action('logout')}><Button danger disabled={!p.auth.logged_in && p.auth.state !== 'expired'}>退出登录</Button></Popconfirm></Flex>
+      </> : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="该渠道使用公开目录，支持搜索与平台精选；暂不支持账号登录和个人推荐。" />}
     </Space>}
   </Modal>;
 }
