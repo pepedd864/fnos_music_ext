@@ -7,8 +7,9 @@ import re
 
 import httpx
 from fastapi import HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from proxy.quality_policy import channel_preference, quality_channels
+from cover_proxy import KuwoCovers
 
 
 @dataclass(frozen=True)
@@ -34,7 +35,10 @@ class PlatformAdapter:
     def normalize(self, row):
         if not isinstance(row, dict) or not str(row.get('id', '')).startswith(self.short + ':'):
             return None
-        return {**{k: row.get(k) for k in ('id', 'title', 'artist', 'album', 'duration_s', 'cover_url')}, 'platform': self.id}
+        item = {**{k: row.get(k) for k in ('id', 'title', 'artist', 'album', 'duration_s', 'cover_url')}, 'platform': self.id}
+        if self.id == 'kuwo' and re.fullmatch(r'kuwo:\d{1,20}', str(row.get('id') or '')):
+            item['cover_url'] = '/app/fnmusic-ext/api/console/platforms/kuwo/cover?rid=' + row['id'].split(':')[1]
+        return item
 
 
 TIERS = ('mp3_128', 'mp3_320', 'lossless')
@@ -54,6 +58,7 @@ def source_list(values):
 def install_console_api(app, service):
     locks = {p: asyncio.Lock() for p in ADAPTERS}
     config_lock = asyncio.Lock()
+    app.state.kuwo_covers = KuwoCovers()
 
     def adapter(pid):
         if pid not in ADAPTERS:
@@ -120,6 +125,12 @@ def install_console_api(app, service):
     @app.get('/api/console/quality')
     async def quality_settings():
         return {'ok': True, 'channels': quality_channels(service.read_env())}
+
+    @app.get('/api/console/platforms/kuwo/cover')
+    async def platform_cover(request: Request, rid: str = ''):
+        data, mime = await request.app.state.kuwo_covers.get(rid)
+        return Response(data, media_type=mime, headers={
+            'Cache-Control': 'private, max-age=21600', 'X-Content-Type-Options': 'nosniff'})
 
     @app.put('/api/console/platforms/{pid}')
     async def platform_toggle(pid: str, request: Request):

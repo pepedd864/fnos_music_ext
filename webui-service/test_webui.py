@@ -2222,6 +2222,40 @@ def test_console_settings_cover_the_complete_config_schema():
     assert "'/advanced'" not in sources
 
 
+def test_kuwo_recommendation_without_artwork_uses_lazy_cover_links(env_file):
+    calls = []
+    def handler(request):
+        calls.append(request.url.path)
+        return httpx.Response(200, json={'items': [{'id': 'kuwo:624683929', 'title': 'Song', 'cover_url': ''}], 'has_more': True})
+    with authed_client() as client:
+        _mock_http(handler)
+        result = client.get('/api/console/platforms/kuwo/recommend').json()
+    assert result['items'][0]['cover_url'] == '/app/fnmusic-ext/api/console/platforms/kuwo/cover?rid=624683929'
+    assert calls == ['/catalog/kuwo/recommend']  # Never wait for per-track images here.
+
+
+def test_kuwo_cover_rejects_non_numeric_ids_before_any_fetch(env_file):
+    with authed_client() as client:
+        assert client.get('/api/console/platforms/kuwo/cover?rid=http://127.0.0.1').status_code == 400
+
+
+def test_kuwo_cover_is_admin_only_and_delivers_image_bytes(env_file, monkeypatch):
+    from cover_proxy import KuwoCovers
+    def handler(request):
+        if request.url.host == 'artistpicserver.kuwo.cn':
+            return httpx.Response(200, text='http://img1.kwcdn.kuwo.cn/star/albumcover/cover.jpg')
+        return httpx.Response(200, content=b'\xff\xd8\xffimage')
+    with TestClient(webui.app) as client:
+        assert client.get('/api/console/platforms/kuwo/cover?rid=42').status_code == 403
+    with authed_client() as client:
+        monkeypatch.setattr(webui.app.state, 'kuwo_covers', KuwoCovers(httpx.MockTransport(handler)))
+        response = client.get('/api/console/platforms/kuwo/cover?rid=42')
+    assert response.status_code == 200 and response.content == b'\xff\xd8\xffimage'
+    assert response.headers['content-type'] == 'image/jpeg'
+    assert response.headers['cache-control'].startswith('private')
+    assert response.headers['x-content-type-options'] == 'nosniff'
+
+
 def test_console_platform_registry_masks_auth_and_saves_enable_without_restart(env_file, svctl):
     with authed_client() as client:
         _mock_http(lambda request: httpx.Response(200, json={'state': 'stored', 'logged_in': True, 'account': '****1234', 'musickey': 'must-not-forward'}))
