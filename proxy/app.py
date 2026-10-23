@@ -41,7 +41,7 @@ try:
     from . import nmplaylists as nmpl
     from . import publicplaylists as pubpl
     from . import transcode as tc
-    from .roam import RoamQueues, RoamError
+    from .roam import ROAM_SOURCES, RoamQueues, RoamError
     from .cache_gc import purge_rolling, sweep_orphan_lyrics
     from .env_merge import parse_env_file
     from .fnlog import diag as fn_diag
@@ -53,7 +53,7 @@ except ImportError:  # uvicorn --app-dir proxy
     import nmplaylists as nmpl  # type: ignore
     import publicplaylists as pubpl  # type: ignore
     import transcode as tc  # type: ignore
-    from roam import RoamQueues, RoamError
+    from roam import ROAM_SOURCES, RoamQueues, RoamError
     from cache_gc import purge_rolling, sweep_orphan_lyrics  # type: ignore
     from env_merge import parse_env_file  # type: ignore
     from fnlog import diag as fn_diag  # type: ignore
@@ -62,7 +62,7 @@ except ImportError:  # uvicorn --app-dir proxy
     from quality_policy import read_channel_qualities  # type: ignore
 
 logger = logging.getLogger("fnmusic_proxy")
-QQ_ROAM = RoamQueues()
+ROAM = RoamQueues()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 # httpx INFO 包含完整签名 URL；播放诊断仅记录歌曲、耗时和状态。
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -604,7 +604,7 @@ def _env_watch_parse(raw: str, kind: str):
     if kind == "qq_quality":
         return raw.lower() if raw.lower() in ("auto", "master", "lossless", "mp3_320", "mp3_128") else None
     if kind == "roam_source":
-        return raw.lower() if raw.lower() in ("local", "qq") else None
+        return raw.lower() if raw.lower() in ('local', *ROAM_SOURCES) else None
     if kind == "dl_quality":
         return raw.lower() if raw.lower() in ("app", "original", "standard") else None
     if kind == "netease_quality":
@@ -4110,7 +4110,7 @@ async def lifespan(fastapi_app: FastAPI):
     try:
         yield
     finally:
-        await QQ_ROAM.close()
+        await ROAM.close()
         await pubpl.shutdown()
         netease_tasks = _cancel_netease_resolutions()
         netease_tasks = [task for task in netease_tasks if task.get_loop() is asyncio.get_running_loop()]
@@ -4162,8 +4162,9 @@ app = FastAPI(title="fnmusic-ext", lifespan=lifespan)
 @app.get("/music/api/v1/track/roam-start")
 @app.get("/music/api/v1/track/roam-next")
 @app.get("/music/api/v1/track/roam-previous")
-async def qq_roam(request: Request):
-    if CONF.get("roam_source") != "qq":
+async def native_roam(request: Request):
+    platform = CONF.get('roam_source', 'local')
+    if platform == 'local':
         return await forward_to_upstream(request, get_upstream_client(request.app))
     error_headers = {"Cache-Control": "no-store"}
     try:
@@ -4177,34 +4178,27 @@ async def qq_roam(request: Request):
             return response or JSONResponse({"code": 401, "msg": "请先登录飞牛", "data": None}, status_code=401)
         if not user or user == "shared":
             raise RoamError("无法确认飞牛账号，请重新登录飞牛", 401)
-        if not CONF.get("musicdl_enabled"):
-            raise RoamError("QQ 漫游需要启用 musicdl 音乐源")
-        source = get_musicdl_client(request.app)
-        status = await source.get("/recommend/qq/session", timeout=4)
-        if status.status_code != 200:
-            raise RoamError("QQ 登录不可用，请在扩展管理页验证或重新扫码")
-        scope = status.json().get("scope")
-        if not isinstance(scope, str) or not scope:
-            raise RoamError("QQ 推荐服务暂时不可用")
+        provider = ROAM_SOURCES.get(platform)
+        if provider is None:
+            raise RoamError('漫游来源无效，请在播放与推荐中重新选择', 400)
+        enabled = (CONF.get('console_netease_enabled') or CONF.get('netease_enabled')) if platform == 'netease' else _source_enabled('online:' + platform + ':roam')
+        if not enabled:
+            raise RoamError(f'请先在音乐平台中启用{provider.name}', 409)
+        source = get_musicbox_client(request.app) if provider.engine == 'musicbox' else get_musicdl_client(request.app)
+        scope = await provider.scope(source)
 
         async def fetch(cursor):
-            result = await source.get("/recommend/qq", params={"cursor": cursor}, timeout=10)
-            if result.status_code != 200:
-                raise RoamError("QQ 推荐暂时不可用，请稍后重试；登录过期时请到扩展管理页刷新")
-            payload = result.json()
-            if not payload.get("ok"):
-                raise RoamError("QQ 推荐返回异常，请稍后重试")
-            return payload
+            return await provider.fetch(source, cursor)
 
-        data = await QQ_ROAM.request((user, device), scope, action, relative, fetch, build_online_track,
-                                     owner=_credential_scope(request))
+        data = await ROAM.request((user, device), scope, action, relative, fetch, build_online_track,
+                                  owner=_credential_scope(request), platform=platform)
         return JSONResponse(disguise_client_json({"code": 0, "msg": "success", "data": data}),
                             headers=error_headers)
     except RoamError as exc:
         return JSONResponse({"code": exc.status, "msg": str(exc), "data": None},
                             status_code=exc.status, headers=error_headers)
     except (httpx.HTTPError, ValueError, TypeError, KeyError):
-        return JSONResponse({"code": 503, "msg": "QQ 推荐请求超时或暂时不可用，请稍后重试", "data": None},
+        return JSONResponse({"code": 503, "msg": "推荐请求超时或暂时不可用，请稍后重试", "data": None},
                             status_code=503, headers=error_headers)
 
 
@@ -5382,7 +5376,7 @@ def _retained_track(request: Request, guid: str) -> tuple[dict | None, dict | No
     # Bare internal Requests (e.g. lyric jobs) have no authentication context.
     # They must not inherit a user's private roam metadata.
     scope = _credential_scope(request) if request.scope.get("headers") else ""
-    roam_item = QQ_ROAM.retained(scope, guid) if scope else None
+    roam_item = ROAM.retained(scope, guid) if scope else None
     if roam_item:
         return roam_item, None
     _clean_search_cache()
@@ -7302,14 +7296,14 @@ _COVER_CDN_TRANSPORT: "httpx.AsyncBaseTransport | None" = None
 async def _kw_cover_by_rid(rid: str) -> str:
     """酷我 artistpicserver 按 rid 取真图（接口返回文本，需解析出图片地址）。"""
     rid = str(rid or "").strip()
-    if not rid.isdigit():
+    if not re.fullmatch(r'\d{1,20}', rid):
         return ""
     cached = _cover_cache_get(f"kw:{rid}")
     if cached:
         return cached
     url = (
-        "https://artistpicserver.kuwo.cn/pic?corp=kuwo&type=rid_pic"
-        f"&pictype=500&size=500&rid={rid}"
+        "https://artistpicserver.kuwo.cn/pic.web?corp=kuwo&type=rid_pic"
+        f"&pictype=url&size=500&rid={rid}"
     )
     try:
         async with _cover_cdn_client() as client:
@@ -7323,6 +7317,11 @@ async def _kw_cover_by_rid(rid: str) -> str:
         if not m:
             return ""
         real = m.group(0)
+        parsed = httpx.URL(real)
+        if (not re.fullmatch(r'img[1-9]?\.(?:kwcdn\.)?kuwo\.cn', parsed.host)
+                or not parsed.path.startswith(('/star/', '/pic_music/'))):
+            return ''
+        real = str(parsed.copy_with(scheme='https', host=parsed.host.replace('.kwcdn.kuwo.cn', '.kuwo.cn')))
     except Exception as e:
         logger.debug("kw artistpic resolve failed for rid=%s: %s", rid, e)
         return ""

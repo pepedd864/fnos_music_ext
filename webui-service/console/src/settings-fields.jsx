@@ -3,7 +3,7 @@ import { Button, Col, Flex, Form, Input, InputNumber, Popconfirm, Row, Select, S
 import { FolderOpenOutlined } from '@ant-design/icons';
 import { pickNas } from './nas.js';
 const { Text } = Typography;
-export const optionNames = { high: '高音质优先', balanced: '平衡', smooth: '流畅优先', auto: '自动 · 跟随音质偏好', master: '母带 FLAC 优先', lossless: '无损 FLAC 优先', mp3_320: 'MP3 320k', mp3_128: '一般 · MP3 128k', local: '飞牛本地曲库', qq: 'QQ 个性化推荐', app: '跟随飞牛 App', original: '原音质文件', standard: 'MP3 320k 优先' };
+export const optionNames = { high: '高音质优先', balanced: '平衡', smooth: '流畅优先', auto: '自动 · 跟随音质偏好', master: '母带 FLAC 优先', lossless: '无损 FLAC 优先', mp3_320: 'MP3 320k', mp3_128: '一般 · MP3 128k', local: '飞牛本地曲库', qq: 'QQ 个性化推荐', kugou: '酷狗每日推荐', kuwo: '酷我公开精选', netease: '网易云每日推荐', app: '跟随飞牛 App', original: '原音质文件', standard: 'MP3 320k 优先' };
 const labels = { FNMUSIC_QUALITY_MODE: '全局默认音质', FNMUSIC_TEE_SAVE_DIR: '下载目录', FNMUSIC_CACHE_DIR: '歌曲缓存目录', FNMUSIC_TEE_CACHE_MAX: '关闭边听边存时保留的缓存数量', FNMUSIC_SEARCH_PROBE: '逐曲探活', FNMUSIC_OFFICIAL_BIND_TIMEOUT_S: '等待飞牛收录的时间（秒）', FNMUSIC_TEE_HANDOFF_MAX: '切歌后继续下载的并行数', FNMUSIC_LIBRARY_SCAN_PATH: '曲库扫描接口', FNMUSIC_LLM_BASE_URL: '服务地址', FNMUSIC_LLM_API_KEY: 'API Key', FNMUSIC_LLM_MODEL: '模型名称' };
 const hints = {
   FNMUSIC_TEE_SAVE_ENABLED: '完整播放在线歌曲后，自动保存到本地曲库。',
@@ -14,7 +14,7 @@ const hints = {
   FNMUSIC_FAV_AUTO_BIND: '收藏或加入歌单后下载歌曲，待飞牛收录后关联本地文件。',
   FNMUSIC_LIBRARY_SCAN_PATH: '可选。需要经过验证的飞牛扫描接口；留空使用飞牛自身的目录监测。',
   FNMUSIC_QQ_QUALITY: '影响之后的在线播放与获取，实际可用音质取决于账号与歌曲授权。',
-  FNMUSIC_ROAM_SOURCE: 'QQ 个性化推荐需要已启用的 QQ 音源和有效登录。',
+  FNMUSIC_ROAM_SOURCE: '所选平台需已启用；QQ、酷狗和网易云需要有效登录，酷我使用公开精选。保存后重新点击飞牛音乐的漫游。',
   FNMUSIC_SEARCH_PROBE: '预先解析每首候选歌曲，可能增加等待时间。',
   FNMUSIC_SEARCH_DEEP_PAGE: '翻页时向支持的音源继续请求歌曲。',
   FNMUSIC_LLM_BASE_URL: '填写 OpenAI 兼容服务地址。',

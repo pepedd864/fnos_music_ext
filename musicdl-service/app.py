@@ -810,14 +810,19 @@ async def kugou_auth(operation: str, request: Request):
 
 @app.get('/catalog/{platform}/{operation}')
 async def platform_catalog(platform: str, operation: str, q: str = '', page: int = Query(1, ge=1, le=100), cursor: int = Query(0, ge=0, le=1000)):
-    if platform not in ('kugou', 'kuwo') or operation not in ('search', 'recommend'):
+    if platform not in ('kugou', 'kuwo') or operation not in ('search', 'recommend', 'session'):
         raise HTTPException(404, '未知目录接口')
+    if operation == 'session':
+        scope = KUGOU.recommendation_scope() if platform == 'kugou' else 'kuwo:public'
+        return JSONResponse({'ok': True, 'scope': scope}, headers={'Cache-Control': 'no-store'})
     if operation == 'search' and not 1 <= len(q.strip()) <= 200:
         raise HTTPException(400, '请输入 1 至 200 字的搜索词')
     if platform == 'kugou':
         result = await (KUGOU.search(q.strip(), page) if operation == 'search' else KUGOU.recommend(cursor))
     else:
         result = await kuwo_catalog(operation, q.strip(), page if operation == 'search' else cursor + 1)
+        if operation == 'recommend':
+            result['scope'] = 'kuwo:public'
     for item in result['items']:
         _cache_put(item, f"{item['title']} {item['artist']}", {}, '')
     return JSONResponse(result, headers={'Cache-Control': 'no-store'})

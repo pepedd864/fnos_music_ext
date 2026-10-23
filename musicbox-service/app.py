@@ -20,6 +20,7 @@ from netease_ext import (
     public_playlist_categories,
     public_playlist_tracks,
     public_playlists,
+    recommendation_scope,
     reset_api,
     search_web_fallback,
     song_detail_raw,
@@ -245,18 +246,35 @@ def catalog_search(q: str = Query(..., min_length=1, max_length=200), page: int 
     return {'ok': True, 'items': items, 'has_more': len(rows) == 20}
 
 
-@app.get('/api/v1/catalog/recommend')
-def catalog_recommend(cursor: int = Query(0, ge=0, le=1000)):
+def _catalog_scope():
     if not check_is_logged_in():
         raise HTTPException(401, '请先登录网易云音乐账号')
+    try:
+        return recommendation_scope()
+    except (ValueError, AttributeError):
+        raise HTTPException(401, '网易云登录不可用，请重新登录') from None
+
+
+@app.get('/api/v1/catalog/session')
+def catalog_session():
+    return JSONResponse({'ok': True, 'scope': _catalog_scope()}, headers={'Cache-Control': 'no-store'})
+
+
+@app.get('/api/v1/catalog/recommend')
+def catalog_recommend(cursor: int = Query(0, ge=0, le=1000)):
+    scope = _catalog_scope()
     try:
         data = _extract_payload(exec_musicbox(['recommend', 'songs', '--limit', '60', '--json']))
     except (UpstreamException, MusicboxTimeoutError):
         raise HTTPException(503, '网易云每日推荐暂不可用，请验证账号或稍后重试') from None
+    if scope != _catalog_scope():
+        raise HTTPException(409, '网易云账号已改变，请重新开始漫游')
     rows = data if isinstance(data, list) else data.get('dailySongs') or data.get('recommend') or [] if isinstance(data, dict) else []
     items = [item for row in rows if (item := _catalog_song(row))]
     start = cursor * 10
-    return {'ok': True, 'items': items[start:start + 10], 'next_cursor': cursor + 1, 'has_more': start + 10 < len(items)}
+    return JSONResponse({'ok': True, 'scope': scope, 'items': items[start:start + 10],
+                         'next_cursor': cursor + 1, 'has_more': start + 10 < len(items)},
+                        headers={'Cache-Control': 'no-store'})
 
 
 @app.get("/api/v1/song/{song_id}/url")

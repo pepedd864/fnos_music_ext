@@ -453,10 +453,11 @@ def test_cover_kw_text_url_resolved_via_rid(monkeypatch, tmp_path):
     def cdn_handler(request: httpx.Request) -> httpx.Response:
         cdn_calls["n"] += 1
         assert "rid=123" in str(request.url)
-        return httpx.Response(200, text="http://img.kuwo.cn/abc/real.jpg extra")
+        assert request.url.path == '/pic.web' and request.url.params['pictype'] == 'url'
+        return httpx.Response(200, text="http://img1.kwcdn.kuwo.cn/pic_music/500/real.jpg extra")
 
     def img_handler(request: httpx.Request) -> httpx.Response:
-        assert str(request.url) == "http://img.kuwo.cn/abc/real.jpg"
+        assert str(request.url) == "https://img1.kuwo.cn/pic_music/500/real.jpg"
         return httpx.Response(200, content=b"\xFF\xD8\xFFimg", headers={"content-type": "image/jpeg"})
 
     _setup_clients(lx=lx_handler)

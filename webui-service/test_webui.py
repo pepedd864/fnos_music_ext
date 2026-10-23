@@ -153,6 +153,7 @@ def test_config_view_merges_defaults(env_file):
         assert rj["schema"]["FNMUSIC_QUALITY_MODE"]["values"] == ["high", "balanced", "smooth"]
         assert rj["schema"]["FNMUSIC_DL_QUALITY"]["values"] == ["app", "original", "standard"]
         assert rj["schema"]["FNMUSIC_DL_QUALITY"]["default"] == "app"
+        assert rj['schema']['FNMUSIC_ROAM_SOURCE']['values'] == ['local', 'qq', 'kugou', 'kuwo', 'netease']
 
 
 # ------------------------------------------------------------------ PUT 校验 ---

@@ -94,6 +94,11 @@ class KugouCatalog:
                 'state': 'expired' if present and expired else 'stored' if present else 'anonymous',
                 'account': '****' + str(self.data['userid'])[-4:] if present else '', 'expires_at': None}
 
+    def recommendation_scope(self):
+        if not self.status()['logged_in']:
+            raise HTTPException(401, '请先登录酷狗音乐账号')
+        return hashlib.sha256(encoded([self.data, self.generation]).encode()).hexdigest()
+
     def save(self, data):
         if not self.valid(data):
             raise HTTPException(502, '酷狗登录未返回有效凭据，请重新扫码')
@@ -205,8 +210,7 @@ class KugouCatalog:
         return {'ok': True, 'items': items, 'has_more': page * limit < int(data.get('total') or 0)}
 
     async def recommend(self, cursor=0):
-        if not self.status()['logged_in']:
-            raise HTTPException(401, '请先登录酷狗音乐账号')
+        scope = self.recommendation_scope()
         generation = self.generation
         result = await self.request('/everyday_song_recommend', router='everydayrec.service.kugou.com', params={'platform': 'ios'}, body={})
         if generation != self.generation:
@@ -215,7 +219,7 @@ class KugouCatalog:
         rows = data.get('song_list') or data.get('songs') or data.get('list') or []
         items = [item for row in rows if (item := normalize(row))]
         start = cursor * 10
-        return {'ok': True, 'items': items[start:start + 10], 'next_cursor': cursor + 1, 'has_more': start + 10 < len(items)}
+        return {'ok': True, 'scope': scope, 'items': items[start:start + 10], 'next_cursor': cursor + 1, 'has_more': start + 10 < len(items)}
 
     @staticmethod
     def accepts(song_id):

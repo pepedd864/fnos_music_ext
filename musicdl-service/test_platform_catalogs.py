@@ -91,6 +91,34 @@ async def test_kugou_refuses_trial_audio_and_recommendations_require_login(tmp_p
 
 
 @pytest.mark.asyncio
+async def test_roam_sessions_and_batches_share_an_opaque_account_scope(tmp_path, monkeypatch):
+    catalog = KugouCatalog(tmp_path, httpx.MockTransport(lambda request: httpx.Response(
+        200, json={'status': 1, 'data': {'song_list': [ROW]}})))
+    monkeypatch.setattr(service, 'KUGOU', catalog)
+    with TestClient(service.app) as client:
+        assert client.get('/catalog/kugou/session').status_code == 401
+        catalog.save({'userid': 123, 'token': 'synthetic-private-token'})
+        session = client.get('/catalog/kugou/session')
+        batch = client.get('/catalog/kugou/recommend').json()
+        assert batch['scope'] == session.json()['scope']
+        assert len(batch['scope']) == 64
+        assert 'synthetic-private-token' not in session.text
+        assert session.headers['cache-control'] == 'no-store'
+        catalog.save({'userid': 456, 'token': 'other-private-token'})
+        assert client.get('/catalog/kugou/session').json()['scope'] != batch['scope']
+        assert client.get('/catalog/kuwo/session').json()['scope'] == 'kuwo:public'
+
+
+@pytest.mark.asyncio
+async def test_kuwo_roam_batch_matches_public_session(monkeypatch):
+    async def public(*args):
+        return {'ok': True, 'items': [], 'next_cursor': 1, 'has_more': False}
+    monkeypatch.setattr(service, 'kuwo_catalog', public)
+    with TestClient(service.app) as client:
+        assert client.get('/catalog/kuwo/recommend').json()['scope'] == client.get('/catalog/kuwo/session').json()['scope']
+
+
+@pytest.mark.asyncio
 async def test_kuwo_public_selections_have_stable_ids_and_never_forward_cookie_or_audio_url():
     async with httpx.AsyncClient(transport=httpx.MockTransport(lambda request: httpx.Response(200, json={'num': 80, 'musiclist': [{'id': 42, 'name': 'Song', 'artist': 'Singer', 'song_duration': '180', 'url': 'SECRET'}]}))) as client:
         result = await kuwo_catalog('recommend', page=2, client=client)

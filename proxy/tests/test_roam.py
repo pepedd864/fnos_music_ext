@@ -8,15 +8,17 @@ from proxy import app as proxy
 from proxy.roam import RoamQueues, RoamError
 
 
-def item(index):
-    return {"id": f"qq:mid{index}", "source": "qq", "title": f"Song {index}",
+def item(index, platform="qq"):
+    song_id = {"qq": f"qq:mid{index}", "kugou": f"kugou:{index:032x}:12",
+               "kuwo": f"kuwo:{index + 1}", "netease": f"netease:{index + 1}"}[platform]
+    return {"id": song_id, "source": platform, "title": f"Song {index}",
             "artist": "Artist", "album": "Album", "duration_s": 200, "ext": "mp3",
             "audio_variants": {"mp3_128": {"file_size": 3200000, "ext": "mp3", "bitrate": 128000}}}
 
 
 @pytest.fixture
-def runtime(monkeypatch, tmp_path):
-    state = {"scope": "account-a", "logged_in": True, "calls": []}
+def runtime(monkeypatch, tmp_path, request):
+    state = {"scope": "account-a", "logged_in": True, "calls": [], "platform": getattr(request, "param", "qq")}
     def upstream(request):
         if request.url.path.endswith("/user/me"):
             if request.headers.get("authorization") == "unauthorized":
@@ -25,16 +27,19 @@ def runtime(monkeypatch, tmp_path):
         return httpx.Response(200, json={"code": 0, "data": {"native": True}})
     def source(request):
         state["calls"].append(str(request.url.path))
-        if request.url.path == "/recommend/qq/session":
+        provider = proxy.ROAM_SOURCES[state["platform"]]
+        if request.url.path == provider.session_path:
             return httpx.Response(200 if state["logged_in"] else 401,
-                                  json={"scope": state["scope"]})
-        assert request.url.path == "/recommend/qq", "Roam must never batch-resolve media or lyrics"
+                                  json={"ok": True, "scope": state["scope"]})
+        assert request.url.path == provider.recommend_path, "Roam must never batch-resolve media or lyrics"
         cursor = int(request.url.params["cursor"])
         indices = range(5) if cursor == 0 else range(cursor * 9 - 5, cursor * 9 + 5)
         return httpx.Response(200, json={"ok": True, "scope": state["scope"],
-            "items": [item(i) for i in indices], "next_cursor": cursor + 1, "has_more": True})
-    monkeypatch.setattr(proxy, "QQ_ROAM", RoamQueues())
-    monkeypatch.setitem(proxy.CONF, "roam_source", "qq")
+            "items": [item(i, state["platform"]) for i in indices], "next_cursor": cursor + 1, "has_more": True})
+    monkeypatch.setattr(proxy, "ROAM", RoamQueues())
+    monkeypatch.setitem(proxy.CONF, "roam_source", state["platform"])
+    monkeypatch.setitem(proxy.CONF, "online_sources", "QQMusicClient,KugouMusicClient,KuwoMusicClient")
+    monkeypatch.setitem(proxy.CONF, "console_netease_enabled", True)
     monkeypatch.setitem(proxy.CONF, "qq_quality", "mp3_128")
     monkeypatch.setitem(proxy.CONF, "musicdl_enabled", True)
     monkeypatch.setenv("FNMUSIC_PLAY_HISTORY_DIR", str(tmp_path / "history"))
@@ -43,6 +48,8 @@ def runtime(monkeypatch, tmp_path):
         httpx.AsyncClient(transport=httpx.MockTransport(upstream), base_url="http://unix"), raising=False)
     monkeypatch.setattr(proxy.app.state, "musicdl_client",
         httpx.AsyncClient(transport=httpx.MockTransport(source), base_url="http://source"), raising=False)
+    monkeypatch.setattr(proxy.app.state, "musicbox_client",
+        httpx.AsyncClient(transport=httpx.MockTransport(source), base_url="http://musicbox"), raising=False)
     with TestClient(proxy.app) as client:
         yield client, state
 
@@ -101,7 +108,7 @@ def test_native_play_events_keep_roam_title_artist_album_and_duration(runtime):
     assert rows[0]["track"]["duration_s"] == 200
     from starlette.requests import Request
     foreign = Request({"type": "http", "headers": [(b"authorization", b"user-b")]})
-    assert proxy.QQ_ROAM.retained(proxy._credential_scope(foreign), "online:qq:mid0") is None
+    assert proxy.ROAM.retained(proxy._credential_scope(foreign), "online:qq:mid0") is None
 
 
 def test_qq_logout_and_account_change_do_not_serve_stale_queue(runtime):
@@ -122,6 +129,48 @@ def test_local_mode_passthrough_and_invalid_config(runtime, monkeypatch):
     assert not state["calls"]
     assert proxy._env_watch_parse("qq", "roam_source") == "qq"
     assert proxy._env_watch_parse("unknown", "roam_source") is None
+
+
+@pytest.mark.parametrize('runtime', ['qq', 'kugou', 'kuwo', 'netease'], indirect=True)
+def test_each_platform_uses_its_catalog_with_stable_native_navigation(runtime):
+    client, state = runtime
+    first = request(client, 'start').json()['data']['current']
+    second = request(client, 'next', first['roamId']).json()['data']
+    assert second['previous'] == first
+    assert request(client, 'previous', second['current']['roamId']).json()['data']['current'] == first
+    assert first['track']['title'] == 'Song 0'
+    assert second['current']['track']['title'] == 'Song 1'
+    provider = proxy.ROAM_SOURCES[state['platform']]
+    assert set(state['calls']) == {provider.session_path, provider.recommend_path}
+    assert all(s.platform == state['platform'] for s in proxy.ROAM.sessions.values())
+    assert proxy._env_watch_parse(state['platform'], 'roam_source') == state['platform']
+    state['scope'] = 'replacement-account'
+    assert request(client, 'next', second['current']['roamId']).status_code == 409
+    state['logged_in'] = False
+    expired = request(client, 'start')
+    assert expired.status_code == 503  # Platform expiry cannot invalidate the fnOS login.
+    assert '登录' in expired.json()['msg']
+
+
+def test_platform_switch_never_reuses_old_positions_even_when_scopes_match(runtime, monkeypatch):
+    client, state = runtime
+    first = request(client, 'start').json()['data']['current']
+    state['platform'] = 'kuwo'
+    monkeypatch.setitem(proxy.CONF, 'roam_source', 'kuwo')
+    assert request(client, 'next', first['roamId']).status_code == 409
+    assert request(client, 'start').json()['code'] == 0
+    assert all(s.platform == 'kuwo' for s in proxy.ROAM.sessions.values())
+
+
+@pytest.mark.parametrize('runtime', ['kugou', 'kuwo', 'netease'], indirect=True)
+def test_disabled_channels_fail_before_any_private_recommendation_fetch(runtime, monkeypatch):
+    client, state = runtime
+    monkeypatch.setitem(proxy.CONF, 'online_sources', 'QQMusicClient')
+    monkeypatch.setitem(proxy.CONF, 'console_netease_enabled', False)
+    monkeypatch.setitem(proxy.CONF, 'netease_enabled', False)
+    monkeypatch.setitem(proxy.CONF, 'netease_playlist_resident', True)
+    assert request(client, 'start').status_code == 409
+    assert state['calls'] == []
 
 
 @pytest.mark.asyncio
