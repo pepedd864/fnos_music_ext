@@ -1,9 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { Alert, Button, Collapse, Descriptions, Empty, Flex, Form, Input, List, Popconfirm, Select, Space, Switch, Typography, Upload } from 'antd';
 import { FolderOpenOutlined, UploadOutlined } from '@ant-design/icons';
-import { additionalPlatforms, currentProvider, lxSources, mergeAdditionalPlatforms, selectProvider } from './settings-model.js';
+import { currentProvider, lxSources, selectProvider } from './settings-model.js';
 import { SettingFields } from './settings-fields.jsx';
-import { QualitySettings } from './quality-settings.jsx';
 import { pickNas } from './nas.js';
 const { Text, Title } = Typography;
 export async function withPreview(api, provider, operation) {
@@ -19,20 +18,6 @@ export function NeteasePlaylistSettings({ api, base, s }) {
     <SettingFields api={api} base={base} s={s} keys={['FNMUSIC_NETEASE_MY_PLAYLISTS', 'FNMUSIC_NETEASE_PLAYLIST_RESIDENT']} />
     <Text type="secondary">账号歌单需要登录。常驻开启后，切换音源仍可使用已选的网易歌单。</Text>
   </Space></section>;
-}
-function MusicdlSources({ api, s }) {
-  const [registered, setRegistered] = useState([]), [fallback, setFallback] = useState([]), [busy, setBusy] = useState(false), [error, setError] = useState('');
-  const active = useRef(true);
-  const load = async (preview = false) => {
-    setBusy(true); setError('');
-    try { const run = () => api('/api/platforms'); const data = await (preview ? withPreview(api, 'musicdl', run) : run()); if (active.current) { setRegistered(data.registered || []); setFallback(data.enabled || []); } }
-    catch (error) { if (active.current) setError(error.message); }
-    finally { if (active.current) setBusy(false); }
-  };
-  useEffect(() => { load(); return () => { active.current = false; }; }, []);
-  const raw = Object.hasOwn(s.changes, 'FNMUSIC_ONLINE_SOURCES') ? s.changes.FNMUSIC_ONLINE_SOURCES : s.value('FNMUSIC_ONLINE_SOURCES') || s.value('MUSICDL_SOURCES') || fallback.join(',');
-  const selected = additionalPlatforms(raw);
-  return <Space direction="vertical" size={16} style={{ width: '100%' }}><Flex justify="flex-end"><Button onClick={() => load(true)} loading={busy}>刷新可用平台</Button></Flex>{error && <Alert type="warning" title={error} showIcon />}<Select aria-label="其他平台" mode="multiple" showSearch value={selected} disabled={s.saving || s.loading} options={[...new Set([...additionalPlatforms(registered.join(',')), ...selected])].map(value => ({ value, label: value.replace(/MusicClient$/, '') }))} onChange={values => { const merged = mergeAdditionalPlatforms(raw, values); s.patch({ FNMUSIC_ONLINE_SOURCES: merged, MUSICDL_SOURCES: merged }); }} placeholder="选择要启用的平台" style={{ width: '100%' }} /></Space>;
 }
 function LxSources({ api, base, s }) {
   const items = lxSources({ ...s.saved, ...s.changes });
@@ -62,14 +47,13 @@ function LxSources({ api, base, s }) {
     <Flex gap={8} wrap><Upload accept=".js" showUploadList={false} beforeUpload={async file => { if (file.size > 9000000) { setReport({ error: '脚本超过 9 MB' }); return false; } await run('upload', async () => upload(file.name, await file.text())); return false; }}><Button icon={<UploadOutlined />} loading={busy === 'upload'}>上传脚本</Button></Upload><Button icon={<FolderOpenOutlined />} onClick={() => run('pick', async () => { const path = await pickNas(base, { directory: false, accept: ['.js'], title: '选择洛雪源脚本' }); if (path) { const result = await api('/api/host-file', { path }); await upload(path.split('/').pop(), result.script); } })} loading={busy === 'pick'}>从 NAS 选择</Button><Button disabled={!url.trim()} loading={busy === 'verify'} onClick={verify}>测试脚本</Button><Button disabled={!url.trim()} onClick={() => { if (!/^(https?:|file:)\/\//i.test(url.trim())) { setReport({ error: '请填写有效的脚本地址' }); return; } const next = items.filter(item => item.url !== url.trim()); const previous = items.find(item => item.url === url.trim()); update([...next, { ...previous, name: name.trim() || url.split('/').pop() || '洛雪源', url: url.trim(), active: previous?.active || false }]); setName(''); setUrl(''); setReport(null); }}>加入列表</Button></Flex></Form>
     {report && <Alert type={report.error ? 'error' : 'success'} title={report.error || report.note} description={report.data && <Descriptions column={1} size="small" items={[{ key: 'name', label: '名称', children: report.data.meta?.name || '—' }, { key: 'platforms', label: '可用平台', children: report.data.platforms?.join('、') || '—' }, { key: 'sample', label: '实测歌曲', children: report.data.probe?.song || '—' }]} />} showIcon />}
     <List dataSource={items} locale={{ emptyText: <Empty description="还没有添加洛雪源" /> }} renderItem={(item, index) => <List.Item actions={[<Switch key="active" aria-label={'启用洛雪源 ' + item.name} checked={!!item.active} disabled={s.saving} onChange={active => update(items.map((entry, i) => i === index ? { ...entry, active } : entry))} />, <Popconfirm key="remove" title="从配置列表移除此源？" onConfirm={() => update(items.filter((_, i) => i !== index))}><Button danger type="text" disabled={s.saving}>移除</Button></Popconfirm>]}><List.Item.Meta title={item.name || '洛雪源'} description={<Text className="file-path" copyable>{item.url}</Text>} /></List.Item>} />
-    <Text type="secondary">新启用的脚本在保存时校验，失败项会自动取消启用，其余设置继续保存。</Text><SettingFields api={api} base={base} s={s} keys={['LX_SOURCES']} />
+    <Text type="secondary">脚本可供多个平台共用，各平台是否使用洛雪接入在平台详情中设置。</Text>
   </Space>;
 }
-export function SourceSettings({ api, base, s }) {
+export function ConnectionSettings({ api, base, s }) {
   const provider = currentProvider({ ...s.saved, ...s.changes });
-  return <Collapse accordion className="platform-source-panels" defaultActiveKey="platforms" items={[
-    { key: 'platforms', label: '其他平台', children: <MusicdlSources api={api} s={s} /> },
-    { key: 'lx', label: '洛雪自定义源', children: <LxSources api={api} base={base} s={s} /> },
-    { key: 'advanced', label: '高级设置', children: <Space direction="vertical" size={24} className="settings-stack"><Form layout="vertical"><Form.Item label="飞牛音乐默认在线来源" extra="保存后生效"><Select aria-label="飞牛音乐默认在线来源" value={provider} options={[{ value: '', label: '关闭在线来源' }, { value: 'musicdl', label: '常用音乐平台' }, { value: 'musicbox', label: '网易云音乐' }, { value: 'lxmusic', label: '洛雪自定义源' }]} onChange={value => s.patch(selectProvider(value))} style={{ width: '100%', maxWidth: 380 }} disabled={s.saving || s.loading} /></Form.Item></Form><QualitySettings api={api} s={s} scope="other" /></Space> },
+  return <Collapse className="platform-connection-panels" defaultActiveKey={['lx']} items={[
+    { key: 'lx', label: '洛雪脚本', children: <LxSources api={api} base={base} s={s} /> },
+    { key: 'advanced', label: '高级设置', children: <Form layout="vertical"><Form.Item label="飞牛音乐默认接入方式" extra="此项影响飞牛音乐的在线搜索与播放，保存后生效。"><Select aria-label="飞牛音乐默认接入方式" value={provider} options={[{ value: '', label: '关闭在线接入' }, { value: 'musicdl', label: '平台直连' }, { value: 'musicbox', label: '网易云直连' }, { value: 'lxmusic', label: '洛雪接入' }]} onChange={value => s.patch(selectProvider(value))} disabled={s.saving || s.loading} /></Form.Item></Form> },
   ]} />;
 }

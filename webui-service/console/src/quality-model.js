@@ -7,10 +7,6 @@ export function channelPreference(channel, values) {
 export function patchChannelQuality(raw, channel, quality) {
   return JSON.stringify({ ...channelOverrides(raw), [channel]: quality });
 }
-export function qualityChannelsForScope(channels, scope) {
-  const common = new Set(['qq', 'kugou', 'kuwo', 'netease']);
-  return channels.filter(channel => scope === 'other' ? !common.has(channel.id) : channel.id === scope);
-}
 export function acquisitionQuality(platform, values, mode) {
   const allowed = platform?.capabilities?.qualities || ['original'];
   const preference = channelPreference(platform?.id, values);

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { acquisitionQuality, channelPreference, patchChannelQuality, qualityChannelsForScope } from '../src/quality-model.js';
+import { acquisitionQuality, channelPreference, patchChannelQuality } from '../src/quality-model.js';
 import { initialNavigation, navigationParams } from '../src/navigation-model.js';
 
 test('channel editing preserves other preferences and explicit auto overrides legacy QQ', () => {
@@ -22,11 +22,6 @@ test('trash is an independent route and library filters survive reloads', () => 
   assert.deepEqual(initialNavigation('?page=versions', pages), { page: 'library', filter: 'multi' });
   assert.deepEqual(initialNavigation('?page=library&filter=multi', pages), { page: 'library', filter: 'multi' });
   assert.equal(navigationParams('?page=library&filter=multi', 'trash', 'multi').toString(), 'page=trash');
-});
-test('platform quality controls do not mix direct accounts with alternative sources', () => {
-  const channels = ['qq', 'kugou', 'kuwo', 'netease', 'lx:wy', 'musicdl:MiguMusicClient'].map(id => ({ id }));
-  assert.deepEqual(qualityChannelsForScope(channels, 'netease'), [{ id: 'netease' }]);
-  assert.deepEqual(qualityChannelsForScope(channels, 'other'), [{ id: 'lx:wy' }, { id: 'musicdl:MiguMusicClient' }]);
 });
 test('old source settings bookmarks open the consolidated platform settings', () => {
   assert.deepEqual(initialNavigation('?page=source-settings', ['library', 'platforms']), { page: 'platforms', filter: 'all' });

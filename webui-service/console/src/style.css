@@ -81,7 +81,8 @@ body { margin: 0; overflow: hidden; background: #f5f5f5; }
 }
 
 .platform-page { width: 100%; max-width: 1160px; }
-.platform-tabs .ant-tabs-nav { margin-bottom: 20px; }
+.platform-toolbar { margin-bottom: 20px; }
+.platform-search { width: 190px; }
 .platform-default-quality { display: flex; align-items: center; gap: 12px; padding-bottom: 2px; white-space: nowrap; }
 .platform-default-quality .ant-select { width: 174px; }
 .platform-table { border: 1px solid #e8e8e8; border-radius: 8px; overflow: hidden; background: #fff; }
@@ -89,9 +90,12 @@ body { margin: 0; overflow: hidden; background: #f5f5f5; }
 .platform-table .ant-table-thead .ant-table-cell { color: #687483; font-size: 13px; font-weight: 500; }
 .platform-row-action { padding-inline: 0; height: auto; }
 .platform-draft-note, .platform-page > .ant-alert { margin-bottom: 20px; }
-.platform-source-panels { background: #fff; border-color: #e8e8e8; }
-.platform-source-panels .ant-collapse-header { padding: 18px 24px !important; }
-.platform-source-panels .ant-collapse-body { padding: 8px 24px 24px !important; }
+.platform-connection-panels { background: #fff; border-color: #e8e8e8; }
+.platform-connection-panels .ant-collapse-header { padding: 18px 20px !important; }
+.platform-connection-panels .ant-collapse-body { padding: 8px 20px 24px !important; }
+.platform-table .ant-table-row { cursor: pointer; }
+.platform-table .ant-table-row:focus-visible { outline: 2px solid #1677ff; outline-offset: -2px; }
+.platform-connection-card .ant-form-item { margin-bottom: 0; }
 .platform-details .ant-alert { margin-bottom: 24px; }
 .platform-detail-section { padding-bottom: 24px; margin-bottom: 24px; border-bottom: 1px solid #f0f0f0; }
 .platform-detail-section:last-child { padding-bottom: 0; margin-bottom: 0; border-bottom: 0; }
@@ -99,10 +103,8 @@ body { margin: 0; overflow: hidden; background: #f5f5f5; }
 .platform-account-status { margin-top: 10px; }
 .platform-detail-section .ant-list-item { padding-top: 0; }
 @media (max-width: 760px) {
-  .platform-tabs .ant-tabs-nav { flex-wrap: wrap; align-items: flex-start; }
-  .platform-tabs .ant-tabs-extra-content { width: 100%; order: -1; margin-bottom: 14px; }
-  .platform-default-quality { justify-content: space-between; }
+  .platform-toolbar > .ant-flex { width: 100%; justify-content: space-between; }
   .platform-table .ant-table-cell { padding: 16px !important; }
-  .platform-source-panels .ant-collapse-header { padding: 16px !important; }
-  .platform-source-panels .ant-collapse-body { padding: 4px 16px 16px !important; }
+  .platform-connection-panels .ant-collapse-header { padding: 16px !important; }
+  .platform-connection-panels .ant-collapse-body { padding: 4px 16px 16px !important; }
 }
