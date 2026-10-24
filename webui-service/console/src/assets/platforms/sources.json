@@ -6,7 +6,8 @@
     "name": "QQ音乐 - 听我想听",
     "appStore": "https://apps.apple.com/cn/app/qq%E9%9F%B3%E4%B9%90-%E5%90%AC%E6%88%91%E6%83%B3%E5%90%AC/id414603431?uo=4",
     "asset": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/ed/c3/8f/edc38f10-2f7c-779e-c407-7b228e600312/AppIcon-0-0-1x_U007ephone-0-1-0-sRGB-85-220.png/512x512bb.jpg",
-    "bytes": 30502
+    "bytes": 30502,
+    "id": "qq"
   },
   {
     "file": "kugou.jpg",
@@ -15,7 +16,8 @@
     "name": "酷狗音乐 - 就是歌多",
     "appStore": "https://apps.apple.com/cn/app/%E9%85%B7%E7%8B%97%E9%9F%B3%E4%B9%90-%E5%B0%B1%E6%98%AF%E6%AD%8C%E5%A4%9A/id472208016?uo=4",
     "asset": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/ad/3a/d4/ad3ad455-06c1-eaa5-7c47-a99169cb599d/AppIcon-0-0-1x_U007epad-0-1-85-220.png/512x512bb.jpg",
-    "bytes": 33367
+    "bytes": 33367,
+    "id": "kugou"
   },
   {
     "file": "kuwo.jpg",
@@ -24,7 +26,8 @@
     "name": "酷我音乐-好音质用酷我",
     "appStore": "https://apps.apple.com/cn/app/%E9%85%B7%E6%88%91%E9%9F%B3%E4%B9%90-%E5%A5%BD%E9%9F%B3%E8%B4%A8%E7%94%A8%E9%85%B7%E6%88%91/id588673713?uo=4",
     "asset": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/fd/e6/e5/fde6e5b6-8ccd-9c86-e166-2da72d37ef3b/AppIcon-1x_U007emarketing-0-7-0-0-sRGB-85-220-0.png/512x512bb.jpg",
-    "bytes": 34099
+    "bytes": 34099,
+    "id": "kuwo"
   },
   {
     "file": "netease.jpg",
@@ -33,6 +36,301 @@
     "name": "网易云音乐-数亿音乐畅听",
     "appStore": "https://apps.apple.com/cn/app/%E7%BD%91%E6%98%93%E4%BA%91%E9%9F%B3%E4%B9%90-%E6%95%B0%E4%BA%BF%E9%9F%B3%E4%B9%90%E7%95%85%E5%90%AC/id590338362?uo=4",
     "asset": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/2d/84/5f/2d845fe3-b1fc-b57b-d6d7-fe5ae6a468f5/appIconNew-0-0-1x_U007epad-0-1-0-85-220.png/512x512bb.jpg",
-    "bytes": 36238
+    "bytes": 36238,
+    "id": "netease"
+  },
+  {
+    "id": "migu",
+    "file": "migu.jpg",
+    "bundleId": "com.migu.migumobilemusic",
+    "publisher": "咪咕音乐有限公司",
+    "name": "咪咕音乐 - 海量正版无限畅听",
+    "appStore": "https://apps.apple.com/cn/app/%E5%92%AA%E5%92%95%E9%9F%B3%E4%B9%90-%E6%B5%B7%E9%87%8F%E6%AD%A3%E7%89%88%E6%97%A0%E9%99%90%E7%95%85%E5%90%AC/id725215315?uo=4",
+    "asset": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/7f/2d/46/7f2d46d7-5ffa-8bd7-7d50-c834566945b8/app_default_icon-0-1x_U007epad-0-1-0-sRGB-85-220-0.jpeg/512x512bb.jpg",
+    "bytes": 31694,
+    "sha256": "8efa0464ea448f3ba8606d6a42f187b17d389d44da4eaa5ab3387b201d480997"
+  },
+  {
+    "id": "bilibili",
+    "file": "bilibili.jpg",
+    "bundleId": "tv.danmaku.bilianime",
+    "publisher": "bilibili",
+    "name": "哔哩哔哩-弹幕番剧直播高清视频",
+    "appStore": "https://apps.apple.com/cn/app/%E5%93%94%E5%93%A9%E5%93%94%E5%93%A9-%E5%BC%B9%E5%B9%95%E7%95%AA%E5%89%A7%E7%9B%B4%E6%92%AD%E9%AB%98%E6%B8%85%E8%A7%86%E9%A2%91/id736536022?uo=4",
+    "asset": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/d3/25/b7/d325b78e-392f-402d-5927-94327f0c4499/AppIcon-0-0-1x_U007epad-0-1-0-sRGB-85-220.png/512x512bb.jpg",
+    "bytes": 52726,
+    "sha256": "79a8d2e8470207636549920ce7960d091dd7af14790a1d9cd030fa1636dd38a3"
+  },
+  {
+    "id": "bodian",
+    "file": "bodian.jpg",
+    "bundleId": "com.wenyu.bodian",
+    "publisher": "北京闻雨科技有限公司",
+    "name": "波点音乐-QQ音乐简洁版",
+    "appStore": "https://apps.apple.com/cn/app/%E6%B3%A2%E7%82%B9%E9%9F%B3%E4%B9%90-qq%E9%9F%B3%E4%B9%90%E7%AE%80%E6%B4%81%E7%89%88/id1541981555?uo=4",
+    "asset": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/f6/d7/d8/f6d7d81c-bfa3-e8ea-9b8d-5835ac3dd9ab/AppIcon-0-0-1x_U007epad-0-11-0-85-220.png/512x512bb.jpg",
+    "bytes": 21125,
+    "sha256": "a68377474f28ba06519a3ad0540b79d82e03f5e069a4fe127e8b09c578c8ef80"
+  },
+  {
+    "id": "soda",
+    "file": "soda.jpg",
+    "bundleId": "com.soda.music",
+    "publisher": "Beijing Douyin Technology Co., Ltd.",
+    "name": "汽水音乐 - 随时听好歌",
+    "appStore": "https://apps.apple.com/cn/app/%E6%B1%BD%E6%B0%B4%E9%9F%B3%E4%B9%90-%E9%9A%8F%E6%97%B6%E5%90%AC%E5%A5%BD%E6%AD%8C/id1605585211?uo=4",
+    "asset": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/85/80/34/858034f1-4ebb-6c1a-d4ca-176289e12cf0/AppIcon-0-0-1x_U007epad-0-1-0-85-220.png/512x512bb.jpg",
+    "bytes": 16678,
+    "sha256": "cc11b58301665eef31f6802196d7e3c8f55b5a955f61c6533033079e9214b8f3"
+  },
+  {
+    "id": "ximalaya",
+    "file": "ximalaya.jpg",
+    "bundleId": "com.gemd.iting",
+    "publisher": "Xi Da (Shanghai) Network Technology Co., Ltd.",
+    "name": "喜马拉雅「听书社区」电台有声小说相声评书",
+    "appStore": "https://apps.apple.com/cn/app/%E5%96%9C%E9%A9%AC%E6%8B%89%E9%9B%85-%E5%90%AC%E4%B9%A6%E7%A4%BE%E5%8C%BA-%E7%94%B5%E5%8F%B0%E6%9C%89%E5%A3%B0%E5%B0%8F%E8%AF%B4%E7%9B%B8%E5%A3%B0%E8%AF%84%E4%B9%A6/id876336838?uo=4",
+    "asset": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/bf/e1/68/bfe1687f-0b36-efcf-6427-d4e174d13c84/AppIcon-0-0-1x_U007emarketing-0-8-0-sRGB-85-220.png/512x512bb.jpg",
+    "bytes": 20092,
+    "sha256": "70fd2f84371475520b043b21ca071a272c921b0ff7d9502a834314056f570720"
+  },
+  {
+    "id": "qingting",
+    "file": "qingting.jpg",
+    "bundleId": "com.Qting.QTTour",
+    "publisher": "Shanghai MarkPhone Culture Media Co., Ltd.",
+    "name": "蜻蜓FM「听小说新闻广播电台收音机」相声评书",
+    "appStore": "https://apps.apple.com/cn/app/%E8%9C%BB%E8%9C%93fm-%E5%90%AC%E5%B0%8F%E8%AF%B4%E6%96%B0%E9%97%BB%E5%B9%BF%E6%92%AD%E7%94%B5%E5%8F%B0%E6%94%B6%E9%9F%B3%E6%9C%BA-%E7%9B%B8%E5%A3%B0%E8%AF%84%E4%B9%A6/id506685538?uo=4",
+    "asset": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/35/fb/26/35fb26b9-8c8f-7fb2-c0e2-82c8b7743a1c/AppIcon-0-0-1x_U007epad-0-11-0-85-220.png/512x512bb.jpg",
+    "bytes": 25002,
+    "sha256": "dde8cf45b6b60fcb7eaa669094209e89db04249dd010a786b353e122d1021d2b"
+  },
+  {
+    "id": "lizhi",
+    "file": "lizhi.jpg",
+    "bundleId": "com.lizhi.lizhifm",
+    "publisher": "Guangzhou Lizhi Network Technology Company Limited",
+    "name": "荔枝-人人都是播客",
+    "appStore": "https://apps.apple.com/cn/app/%E8%8D%94%E6%9E%9D-%E4%BA%BA%E4%BA%BA%E9%83%BD%E6%98%AF%E6%92%AD%E5%AE%A2/id1093693053?uo=4",
+    "asset": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/77/85/cc/7785ccad-0c48-575b-6954-f5c775ed9281/AppIcon-0-0-1x_U007ephone-0-11-0-85-220.png/512x512bb.jpg",
+    "bytes": 18340,
+    "sha256": "b36a32b8b9cd3de8bd39a54bf9d38dbe9013fad0b9a2c09b680326f20e59b7b6"
+  },
+  {
+    "id": "fivesing",
+    "file": "fivesing.jpg",
+    "bundleId": "com.5sing.5sing",
+    "publisher": "Guangzhou KuGou Technology CO. , LTD",
+    "name": "5sing音乐",
+    "appStore": "https://apps.apple.com/cn/app/5sing%E9%9F%B3%E4%B9%90/id473613148?uo=4",
+    "asset": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/9d/80/11/9d80113c-50c4-e5a1-38f0-b9cff815ed12/AppIcon-0-0-1x_U007emarketing-0-6-0-0-85-220.png/512x512bb.jpg",
+    "bytes": 18784,
+    "sha256": "67434282b01355afcd98f2d4c690ab2c9b32105069d703487964e1b68349d261"
+  },
+  {
+    "id": "qianqian",
+    "file": "qianqian.jpg",
+    "bundleId": "com.baidu.TingIPhone",
+    "publisher": "SHENZHEN TAILE CULTURE TECHNOLOGY CO., LTD.",
+    "name": "千千音乐-听见你的世界",
+    "appStore": "https://apps.apple.com/cn/app/%E5%8D%83%E5%8D%83%E9%9F%B3%E4%B9%90-%E5%90%AC%E8%A7%81%E4%BD%A0%E7%9A%84%E4%B8%96%E7%95%8C/id468623917?uo=4",
+    "asset": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/00/19/14/001914e7-1072-2abd-f102-d118be91e95c/AppIcon-0-0-1x_U007emarketing-0-6-0-0-85-220.png/512x512bb.jpg",
+    "bytes": 18957,
+    "sha256": "e707f21729d727e1802a9300b00e4493e7a08c051100eeb485e4382e520ff60d"
+  },
+  {
+    "id": "apple",
+    "file": "apple.jpg",
+    "bundleId": "com.apple.Music",
+    "publisher": "Apple",
+    "name": "Apple Music",
+    "appStore": "https://apps.apple.com/us/app/apple-music/id1108187390?uo=4",
+    "asset": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/c2/74/89/c27489c2-2c63-2e32-efee-b0f59b3184ef/musicCalistoga-0-0-1x_U007epad-0-1-0-85-220.png/512x512bb.jpg",
+    "bytes": 23318,
+    "sha256": "4900851b9e34808e8f18b2a69ca73e29215a4ebcfce4f2a812f664c53e01f68c"
+  },
+  {
+    "id": "itunes",
+    "file": "itunes.jpg",
+    "bundleId": "com.apple.MobileStore",
+    "publisher": "Apple",
+    "name": "iTunes Store",
+    "appStore": "https://apps.apple.com/us/app/itunes-store/id915061235?uo=4",
+    "asset": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/3b/6c/cf/3b6ccfcf-f772-d3b6-fbd0-7a74b71e130c/itunesstoreCalistoga-0-0-1x_U007epad-0-1-0-85-220.png/512x512bb.jpg",
+    "bytes": 23963,
+    "sha256": "4ec9730d5029ed0e30d8d69c5253a02422e1441f031306b889d99be39c89f60b"
+  },
+  {
+    "id": "audius",
+    "file": "audius.jpg",
+    "bundleId": "co.audius.audiusmusic",
+    "publisher": "Audius, Inc.",
+    "name": "Audius Music",
+    "appStore": "https://apps.apple.com/us/app/audius-music/id1491270519?uo=4",
+    "asset": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/34/1c/aa/341caaa2-9acb-955a-1c18-af1ad50b804a/AppIcon-0-0-1x_U007ephone-0-1-85-220.png/512x512bb.jpg",
+    "bytes": 13359,
+    "sha256": "7abd5cc223522eb7af09e2bf317dd986fb577eca7c7c3b42e893fe292126f23c"
+  },
+  {
+    "id": "deezer",
+    "file": "deezer.jpg",
+    "bundleId": "com.deezer.Deezer",
+    "publisher": "DEEZER SA",
+    "name": "Deezer: Music Player, Podcast",
+    "appStore": "https://apps.apple.com/us/app/deezer-music-player-podcast/id292738169?uo=4",
+    "asset": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/6a/3f/cb/6a3fcbc2-7249-4bfa-b9e6-e8d525d255fb/AppIcon-0-0-1x_U007epad-0-11-0-0-85-220.png/512x512bb.jpg",
+    "bytes": 22365,
+    "sha256": "19e048393366dcdbc84ec9a8e9795d795b8551ffe6eaed5e00766d54cbe8486f"
+  },
+  {
+    "id": "jiosaavn",
+    "file": "jiosaavn.jpg",
+    "bundleId": "com.Saavn.Saavn",
+    "publisher": "Saavn Media Limited",
+    "name": "JioSaavn – Music & Podcasts",
+    "appStore": "https://apps.apple.com/in/app/jiosaavn-music-podcasts/id441813332?uo=4",
+    "asset": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/03/2e/75/032e752b-d99c-8609-0a2e-782f40dbc5b3/appiconfree-0-0-1x_U007emarketing-0-8-0-85-220.png/512x512bb.jpg",
+    "bytes": 21897,
+    "sha256": "88c151ecfa5975a30fb5a562f63b34ea220249614248e776a3887f4902d8452f"
+  },
+  {
+    "id": "joox",
+    "file": "joox.jpg",
+    "bundleId": "com.tencent.joox",
+    "publisher": "Tencent Mobility Limited",
+    "name": "JOOX音樂 - AI聽歌識曲播放器",
+    "appStore": "https://apps.apple.com/hk/app/joox%E9%9F%B3%E6%A8%82-ai%E8%81%BD%E6%AD%8C%E8%AD%98%E6%9B%B2%E6%92%AD%E6%94%BE%E5%99%A8/id914406371?uo=4",
+    "asset": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/91/ce/0b/91ce0bfd-2498-1469-0cbc-1467173fc410/AppIcon-0-1x_U007ephone-0-1-0-sRGB-85-220-0.png/512x512bb.jpg",
+    "bytes": 28926,
+    "sha256": "b2c34e11b74b9085cf0188055de840879e1fa628bb68866770f34666d6adb3b4"
+  },
+  {
+    "id": "lrts",
+    "file": "lrts.jpg",
+    "bundleId": "com.yytingting.iting",
+    "publisher": "Lazyaudio Online Co., Ltd.",
+    "name": "懒人听书-热门有声小说听相声广播FM",
+    "appStore": "https://apps.apple.com/cn/app/%E6%87%92%E4%BA%BA%E5%90%AC%E4%B9%A6-%E7%83%AD%E9%97%A8%E6%9C%89%E5%A3%B0%E5%B0%8F%E8%AF%B4%E5%90%AC%E7%9B%B8%E5%A3%B0%E5%B9%BF%E6%92%ADfm/id559977766?uo=4",
+    "asset": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/4c/34/b2/4c34b285-3d56-ed55-256b-1b9fbf714b12/AppIcon-0-0-1x_U007emarketing-0-0-0-8-0-0-sRGB-85-220.png/512x512bb.jpg",
+    "bytes": 46488,
+    "sha256": "ac0e62d2e5b2f9251d8597ab096a1ea8a6e34ba0265a5a31ec00ab7d50990815"
+  },
+  {
+    "id": "moov",
+    "file": "moov.jpg",
+    "bundleId": "com.moov.togo",
+    "publisher": "MOOV (HONG KONG) LIMITED",
+    "name": "MOOV 音樂",
+    "appStore": "https://apps.apple.com/hk/app/moov-%E9%9F%B3%E6%A8%82/id436310157?uo=4",
+    "asset": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/e7/dc/a7/e7dca780-0b4c-553e-f037-b3fa68e6f8e4/appIconMoov-0-0-1x_U007ephone-0-1-0-sRGB-85-220.png/512x512bb.jpg",
+    "bytes": 32626,
+    "sha256": "b09582e78e43ceb4ed98b7cd8011e9c5056b499d8d9d3562503475466bb519f3"
+  },
+  {
+    "id": "qobuz",
+    "file": "qobuz.jpg",
+    "bundleId": "com.qobuz.music",
+    "publisher": "Qobuz",
+    "name": "Qobuz: Music & Editorial",
+    "appStore": "https://apps.apple.com/us/app/qobuz-music-editorial/id946429340?uo=4",
+    "asset": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/20/4b/74/204b7462-54b9-263a-1c71-860b11dc8a26/AppIcon-Release-0-0-1x_U007epad-0-1-0-85-220.png/512x512bb.jpg",
+    "bytes": 22333,
+    "sha256": "b98187a38b2d7125935a4b83e346e72e03a7f79fa9d5b3a124c39f04aa5e6933"
+  },
+  {
+    "id": "soundcloud",
+    "file": "soundcloud.jpg",
+    "bundleId": "com.soundcloud.TouchApp",
+    "publisher": "SoundCloud Global Limited & Co KG",
+    "name": "SoundCloud: Discover New Music",
+    "appStore": "https://apps.apple.com/us/app/soundcloud-discover-new-music/id336353151?uo=4",
+    "asset": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/17/dc/16/17dc16ff-e8a9-0107-c4b8-1c4dc2c9dbb0/AppIcon-0-0-1x_U007epad-0-1-0-85-220.png/512x512bb.jpg",
+    "bytes": 17256,
+    "sha256": "0d10736b0dddda6e28623e802be63543feed7375ae8b5776a24e1beece6e7ebf"
+  },
+  {
+    "id": "spotify",
+    "file": "spotify.jpg",
+    "bundleId": "com.spotify.client",
+    "publisher": "Spotify",
+    "name": "Spotify: Music and Podcasts",
+    "appStore": "https://apps.apple.com/us/app/spotify-music-and-podcasts/id324684580?uo=4",
+    "asset": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/8b/f2/6a/8bf26ab9-3ced-cb5c-a2b3-19f65e7f5cc6/AppIcon-0-0-1x_U007epad-0-1-0-0-85-220.png/512x512bb.jpg",
+    "bytes": 36954,
+    "sha256": "5bd085af9f81fbd40004f963861e83e3a6c0dcd72366d07a4098c0f9a30ebdfd"
+  },
+  {
+    "id": "streetvoice",
+    "file": "streetvoice.jpg",
+    "bundleId": "streetvoice.streetvoice.streetvoice",
+    "publisher": "StreetVoice",
+    "name": "StreetVoice 街聲 - 暢聽獨立音樂、演出活動通知",
+    "appStore": "https://apps.apple.com/tw/app/streetvoice-%E8%A1%97%E8%81%B2-%E6%9A%A2%E8%81%BD%E7%8D%A8%E7%AB%8B%E9%9F%B3%E6%A8%82-%E6%BC%94%E5%87%BA%E6%B4%BB%E5%8B%95%E9%80%9A%E7%9F%A5/id804704919?uo=4",
+    "asset": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/2c/69/20/2c6920c1-e9f6-06bc-fb4a-76e370a68b5f/AppIcon-0-0-1x_U007emarketing-0-7-0-85-220.png/512x512bb.jpg",
+    "bytes": 15528,
+    "sha256": "95e8847ee1c4ac914897b2750dba35be8206ee1e9aaa37e4cdd6593f494b2839"
+  },
+  {
+    "id": "suno",
+    "file": "suno.jpg",
+    "bundleId": "ai.suno.ios",
+    "publisher": "Suno, Inc.",
+    "name": "Suno - AI Songs, Music, Lyrics",
+    "appStore": "https://apps.apple.com/us/app/suno-ai-songs-music-lyrics/id6480136315?uo=4",
+    "asset": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/3f/8c/86/3f8c86b0-54f7-e247-6bd4-f7e9be6d978c/AppIcon-0-0-1x_U007ephone-0-1-0-sRGB-85-220.png/512x512bb.jpg",
+    "bytes": 73503,
+    "sha256": "cad6a718887a347c0202043d0c24f41e04ebbd624aac549d79f6fe446bad2099"
+  },
+  {
+    "id": "tidal",
+    "file": "tidal.jpg",
+    "bundleId": "com.aspiro.TIDAL",
+    "publisher": "TIDAL Music AS",
+    "name": "TIDAL Music: HiFi Sound",
+    "appStore": "https://apps.apple.com/us/app/tidal-music-hifi-sound/id913943275?uo=4",
+    "asset": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/31/e8/eb/31e8eb5e-8dbc-42fe-c5c1-ffcc16d904b5/AppIcon-0-0-1x_U007epad-0-1-0-85-220.png/512x512bb.jpg",
+    "bytes": 12334,
+    "sha256": "7221ee70f2242e99dfec45cd442440090777158799b91338d35bb5b0330d06fe"
+  },
+  {
+    "id": "youtube",
+    "file": "youtube.jpg",
+    "bundleId": "com.google.ios.youtubemusic",
+    "publisher": "Google",
+    "name": "YouTube Music",
+    "appStore": "https://apps.apple.com/us/app/youtube-music/id1017492454?uo=4",
+    "asset": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/70/a5/45/70a54567-d6d2-8f53-67bd-fcb175327044/logo_youtube_music_2024_q4_color-0-0-1x_U007emarketing-0-0-0-7-0-0-0-85-220.png/512x512bb.jpg",
+    "bytes": 26847,
+    "sha256": "04b174d1ff6855db7fa9dfcafab82655a07d7e8da03afdbf4d41c465e4b73d7d"
+  },
+  {
+    "id": "jamendo",
+    "file": "jamendo.png",
+    "name": "Jamendo",
+    "publisher": "Jamendo",
+    "website": "https://www.jamendo.com/",
+    "asset": "https://www.jamendo.com/Client/assets/toolkit/images/icon/android-chrome-192x192.994137531.png",
+    "bytes": 2519,
+    "sha256": "7ad721112944251db89d7575ec380671f96ce9e35deac0244cc9e1c47ddd6ee3"
+  },
+  {
+    "id": "fma",
+    "file": "fma.svg",
+    "name": "Free Music Archive",
+    "publisher": "Free Music Archive",
+    "website": "https://freemusicarchive.org/",
+    "asset": "https://freemusicarchive.org/img/favicon.svg",
+    "bytes": 1955,
+    "sha256": "e11963684e0292df9dc9b3daa95aacb71f99e6873eb77576216e4278363c198f"
+  },
+  {
+    "id": "wikimediacommons",
+    "file": "wikimediacommons.svg",
+    "name": "Wikimedia Commons",
+    "publisher": "Wikimedia Foundation",
+    "website": "https://commons.wikimedia.org/",
+    "asset": "https://commons.wikimedia.org/static/images/icons/commonswiki.svg",
+    "bytes": 1679,
+    "sha256": "7e42ca528fb98d40d51ade47a6456adf7eb952c975e8b8d517c54ac2a66c0928"
   }
 ]

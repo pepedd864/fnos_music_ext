@@ -4,7 +4,7 @@ import { LinkOutlined, PlusOutlined } from '@ant-design/icons';
 import { ChannelQuality, useQualityChannels } from './quality-settings.jsx';
 import { optionNames } from './settings-fields.jsx';
 import { additionalPlatforms, mergeAdditionalPlatforms } from './settings-model.js';
-import { clientName, patchAggregatePlatform, patchLxPlatform, platformRows, platformStatus } from './platform-model.js';
+import { clientName, clientPlatform, patchAggregatePlatform, patchLxPlatform, platformRows, platformStatus } from './platform-model.js';
 import { ConnectionSettings, NeteasePlaylistSettings } from './source-settings.jsx';
 const { Text } = Typography;
 
@@ -61,7 +61,7 @@ export function Platforms({ api, base, s, m, PlatformLogo }) {
     </Drawer>
     <Drawer title="接入管理" open={connections} onClose={() => setConnections(false)} size={600} destroyOnHidden footer={footer}><div className="platform-details">{feedback}{settingsReady ? <ConnectionSettings api={api} base={base} s={s} /> : <Spin spinning={s.loading}><Empty description="正在读取设置" /></Spin>}</div></Drawer>
     <Modal title="添加平台" open={adding} onCancel={() => setAdding(false)} okText="应用到列表" okButtonProps={{ disabled: catalogBusy || !!catalogError }} onOk={() => { const merged = mergeAdditionalPlatforms(values.FNMUSIC_ONLINE_SOURCES || values.MUSICDL_SOURCES, extra); s.patch({ FNMUSIC_ONLINE_SOURCES: merged, MUSICDL_SOURCES: merged }); setAdding(false); }}>
-      <Space direction="vertical" size={16} className="settings-stack">{catalogError && <Alert type="error" title={catalogError} showIcon action={<Button onClick={addPlatforms}>重试</Button>} />}<Select aria-label="选择添加的平台" mode="multiple" showSearch optionFilterProp="label" loading={catalogBusy} value={extra} onChange={setExtra} options={[...new Set([...registered, ...extra])].map(client => ({ value: client, label: clientName(client) }))} placeholder="搜索并选择平台" style={{ width: '100%' }} /><Text type="secondary">添加后保存设置。账号接入和洛雪接入仍在各平台详情中管理。</Text></Space>
+      <Space direction="vertical" size={16} className="settings-stack">{catalogError && <Alert type="error" title={catalogError} showIcon action={<Button onClick={addPlatforms}>重试</Button>} />}<Select aria-label="选择添加的平台" mode="multiple" showSearch optionFilterProp="label" loading={catalogBusy} value={extra} onChange={setExtra} options={[...new Set([...registered, ...extra])].map(client => ({ value: client, label: clientName(client) }))} optionRender={option => <Space size={10}><PlatformLogo platform={{ id: clientPlatform(option.data.value), name: option.data.label }} size={24} />{option.data.label}</Space>} placeholder="搜索并选择平台" style={{ width: '100%' }} /><Text type="secondary">添加后保存设置。账号接入和洛雪接入仍在各平台详情中管理。</Text></Space>
     </Modal>
   </div>;
 }

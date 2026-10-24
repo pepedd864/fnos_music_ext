@@ -17,6 +17,7 @@ import { Discovery } from './discovery.jsx';
 import { settingPages } from './settings-model.js';
 import { Settings, SaveSettings, settingsMenu, useSettings } from './settings.jsx';
 import { Platforms } from './platforms.jsx';
+import { platformLogo } from './platform-artwork.js';
 
 const { Header, Sider, Content } = Layout;
 const { Title, Text, Paragraph } = Typography;
@@ -64,7 +65,7 @@ function Cover({ song, size = 46 }) {
   return <Avatar shape="square" size={size} src={song?.cover_url || undefined} alt={song?.album || song?.title || '专辑封面'} icon={<SoundOutlined />} style={{ flexShrink: 0, background: '#dce8ed', color: '#507387' }} />;
 }
 function PlatformLogo({ platform, size = 44 }) {
-  return <Avatar shape="square" size={size} src={platform.logo ? `${platform.logo}?v=20261023` : undefined} alt={`${platform.name}图标`} style={{ background: '#f3f5f7', color: '#596779', border: '1px solid #f0f0f0', flexShrink: 0 }}>{platform.name?.[0]}</Avatar>;
+  return <Avatar shape="square" size={size} src={platformLogo(platform.id) || platform.logo || undefined} alt={`${platform.name}图标`} icon={<SoundOutlined />} style={{ background: '#f3f5f7', color: '#596779', border: '1px solid #f0f0f0', flexShrink: 0 }} />;
 }
 function Metrics({ m }) {
   const stats = m.data?.stats || {};

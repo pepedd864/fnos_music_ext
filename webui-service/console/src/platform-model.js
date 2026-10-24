@@ -4,6 +4,10 @@ const known = {
   qq: 'QQ 音乐', kugou: '酷狗音乐', kuwo: '酷我音乐', netease: '网易云音乐', migu: '咪咕音乐',
   bilibili: '哔哩哔哩', qianqian: '千千音乐', bodian: '波点音乐', soda: '汽水音乐',
   ximalaya: '喜马拉雅', qingting: '蜻蜓 FM', lizhi: '荔枝', fivesing: '5sing',
+  lrts: '懒人听书', streetvoice: '街声 StreetVoice', apple: 'Apple Music', itunes: 'iTunes',
+  audius: 'Audius', deezer: 'Deezer', jamendo: 'Jamendo', jiosaavn: 'JioSaavn', joox: 'JOOX',
+  moov: 'MOOV', qobuz: 'Qobuz', soundcloud: 'SoundCloud', spotify: 'Spotify', suno: 'Suno',
+  tidal: 'TIDAL', youtube: 'YouTube Music', fma: 'Free Music Archive', wikimediacommons: 'Wikimedia Commons',
 };
 const commonClients = { qq: 'QQMusicClient', kugou: 'KugouMusicClient', kuwo: 'KuwoMusicClient' };
 const lxPlatforms = { kg: 'kugou', kw: 'kuwo', wy: 'netease', mg: 'migu' };
