@@ -836,6 +836,39 @@ def test_main_start_runs_idempotent_extend(sb):
     assert sb.install_args() == ["extend"]
 
 
+@pytest.mark.parametrize("active,owner_matches,health,curl_rc,expected", [
+    (True, True, '{"ok":true,"degraded":false}', 0, []),
+    (False, True, '{"ok":true,"degraded":false}', 0, ["extend"]),
+    (True, False, '{"ok":true,"degraded":false}', 0, ["extend"]),
+    (True, True, '{"ok":true,"degraded":true}', 0, ["extend"]),
+    (True, True, '{"ok":false,"degraded":false}', 0, ["extend"]),
+    (True, True, '<html>official music</html>', 0, ["extend"]),
+    (True, True, '{"ok":true,"degraded":false}', 7, ["extend"]),
+])
+def test_main_start_reconciles_healthy_install_without_redeploy(
+        sb, active, owner_matches, health, curl_rc, expected):
+    """App Center can restart its bookkeeping without rebuilding a live install."""
+    repo = sb.make_repo(env_text="X=1\n")
+    (repo / "extend.sh").write_text(EXTEND_STUB, encoding="utf-8")
+    owner = repo if owner_matches else sb.tmp
+    _write_stub(sb.bindir, "systemctl", f'''#!/bin/bash
+case "$1" in
+  is-active) exit {0 if active else 3} ;;
+  show) printf '%s\\n' '{owner}' ;;
+  *) exit 1 ;;
+esac
+''')
+    _write_stub(sb.bindir, "curl", f'''#!/bin/bash
+printf '%s' '{health}'
+exit {curl_rc}
+''')
+    sb.add_docker(rc=1)  # Healthy reconciliation must not need Docker or a build.
+    result = sb.run("main", "start")
+    assert result.returncode == 0, result.stderr
+    assert sb.install_args() == expected
+    assert not sb.docker_log.exists()
+
+
 def test_main_start_failure_surfaces_log_tail(sb):
     sb.make_repo(env_text="X=1\n", stub=EXTEND_STUB)
     log = sb.pkgvar / "fnmusic-app.log"

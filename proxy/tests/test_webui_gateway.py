@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib.util
+import http.client
 import json
 import os
 import socket
@@ -138,6 +139,67 @@ def test_socket_forwards_desktop_path(tmp_path: Path):
     data = _request(sock_path, b"GET /app/fnmusic-ext/ HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
     upstream.shutdown()
     assert b"/app/fnmusic-ext/" in data
+
+
+class _PersistentHandler(_Handler):
+    protocol_version = 'HTTP/1.1'
+
+    def _reply(self, status, body):
+        self.send_response(status)
+        self.send_header('Content-Length', str(len(body)))
+        if self.close_connection:
+            self.send_header('Connection', 'close')
+        self.end_headers()
+        self.wfile.write(body)
+
+    def do_GET(self):  # noqa: N802
+        self._reply(200, b'<html>console</html>')
+
+    def do_POST(self):  # noqa: N802
+        self.rfile.read(int(self.headers.get('Content-Length', 0)))
+        self._reply(501, b'{"detail":"host gateway was bypassed"}')
+
+
+@pytest.mark.parametrize('target', ['library', 'fs-check', 'host-file', 'library/audio', 'library/cover'])
+def test_html_connection_reuse_does_not_bypass_host_handlers(tmp_path, monkeypatch, target):
+    """A browser loads HTML before reusing its connection for a host endpoint."""
+    calls = []
+    def host_reply(client, headers, raw, **kwargs):
+        if int(headers.get('content-length', 0)):
+            assert _MOD._read_full_body(client, headers, raw) == b'{}'
+        calls.append((headers.get('x-trim-isadmin'), kwargs.get('audio', False)))
+        client.sendall(_MOD._json_response(200, {'ok': True, 'handled_by_host': True}))
+        client.close()
+    monkeypatch.setattr(_MOD, 'handle_library', host_reply)
+    monkeypatch.setattr(_MOD, 'handle_fs_check', host_reply)
+    monkeypatch.setattr(_MOD, 'handle_host_file', host_reply)
+    upstream = ThreadingHTTPServer(('127.0.0.1', 0), _PersistentHandler)
+    threading.Thread(target=upstream.serve_forever, daemon=True).start()
+    path = _start_gateway(tmp_path, upstream.server_address[1])
+    class Desktop(http.client.HTTPConnection):
+        def connect(self):
+            self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            self.sock.settimeout(3)
+            self.sock.connect(str(path))
+    conn = Desktop('localhost', timeout=3)
+    try:
+        conn.request('GET', '/app/fnmusic-ext/', headers={'Connection': 'keep-alive'})
+        page = conn.getresponse()
+        assert page.read() == b'<html>console</html>'
+        method = 'GET' if target in {'library/audio', 'library/cover'} else 'POST'
+        conn.request(method, '/app/fnmusic-ext/api/' + target,
+                     body=None if method == 'GET' else '{}',
+                     headers={'X-Trim-Isadmin': 'true', 'Content-Type': 'application/json'})
+        response = conn.getresponse()
+        body = response.read()
+        assert response.status == 200, body
+        assert json.loads(body)['handled_by_host'] is True
+        assert calls == [('true', target == 'library/audio')]
+        assert page.will_close is True
+    finally:
+        conn.close()
+        upstream.shutdown()
+        upstream.server_close()
 
 
 def test_host_file_requires_admin(tmp_path: Path):
@@ -316,3 +378,39 @@ def test_fs_check_only_post_intercepted(tmp_path: Path):
     data = _request(sock_path, b"GET /app/fnmusic-ext/api/fs-check HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
     upstream.shutdown()
     assert b"/app/fnmusic-ext/api/fs-check" in data
+
+
+def test_library_gateway_admin_json_actions_and_audio_range(tmp_path, monkeypatch):
+    from proxy.library_manager import LibraryManager
+    root = tmp_path / 'music'
+    root.mkdir()
+    (root / 'test.mp3').write_bytes(b'abcdefghij')
+    def meta(fd, path):
+        return {'title': 'Song', 'artist': 'Artist', 'album': 'Album', 'duration_s': 3,
+                'format': 'MP3', 'bitrate': 128000, 'sample_rate': 44100}
+    manager = LibraryManager(tmp_path / 'index', metadata=meta)
+    monkeypatch.setattr(_MOD, '_library_manager', manager)
+    sock_path = _start_gateway(tmp_path, 1)
+    def post(body, admin=True, origin='http://localhost'):
+        encoded = json.dumps(body).encode()
+        site = 'cross-site' if origin == 'https://other.example' else 'same-origin'
+        return _request(sock_path, (f'POST /app/fnmusic-ext/api/library HTTP/1.1\r\nHost: localhost\r\nOrigin: {origin}\r\nSec-Fetch-Site: {site}\r\nContent-Type: application/json\r\nX-Trim-Isadmin: {str(admin).lower()}\r\nContent-Length: {len(encoded)}\r\n\r\n').encode() + encoded)
+    assert b'403' in post({'action': 'list'}, admin=False).split(b'\r\n')[0]
+    assert b'403' in post({'action': 'list'}, origin='https://other.example').split(b'\r\n')[0]
+    assert b'200' in post({'action': 'list'}, origin='http://192.168.0.100:5666').split(b'\r\n')[0]
+    assert b'200' in post({'action': 'add_root', 'path': str(root)}).split(b'\r\n')[0]
+    manager.scan()
+    data = json.loads(post({'action': 'list'}).split(b'\r\n\r\n', 1)[1])
+    fid = data['songs'][0]['files'][0]['id']
+    denied_cover = _request(sock_path, f'GET /app/fnmusic-ext/api/library/cover?id={fid} HTTP/1.1\r\nHost: localhost\r\n\r\n'.encode())
+    assert b'403' in denied_cover.split(b'\r\n')[0]
+    missing_cover = _request(sock_path, f'GET /app/fnmusic-ext/api/library/cover?id={fid} HTTP/1.1\r\nHost: localhost\r\nX-Trim-Isadmin: true\r\n\r\n'.encode())
+    assert b'404' in missing_cover.split(b'\r\n')[0]
+    raw = _request(sock_path, f'GET /app/fnmusic-ext/api/library/audio?id={fid} HTTP/1.1\r\nHost: localhost\r\nX-Trim-Isadmin: true\r\nRange: bytes=2-5\r\n\r\n'.encode())
+    assert b'206' in raw.split(b'\r\n')[0]
+    assert raw.split(b'\r\n\r\n', 1)[1] == b'cdef'
+    assert b'Content-Range: bytes 2-5/10' in raw
+    assert b'200' in post({'action': 'trash', 'id': fid}).split(b'\r\n')[0]
+    assert not (root / 'test.mp3').exists()
+    assert b'200' in post({'action': 'restore', 'id': fid}).split(b'\r\n')[0]
+    assert (root / 'test.mp3').read_bytes() == b'abcdefghij'

@@ -9,8 +9,8 @@ ffmpeg 输出 fMP4 分片到 cache/hls/{safe_guid}/，playlist 由服务端按�
 设计要点：
 - 分片用 -hls_flags temp_file：ffmpeg 先写 .tmp 再改名，文件出现即完整，
   服务端无需猜测分片是否写完。
-- 合成分片数取 floor(duration/hls_time)：ffmpeg 实际产出 ceil ≥ floor，
-  App 多要一片会 404、少要一片只是末尾 <1s 尾差，取 floor 永不越界。
+- 合成分片数取 ceil(duration/hls_time)，保留不足一个切片的尾段；
+  使用 floor 会漏掉至多一个切片的真实音频，不能靠延长 EXTINF 补回。
   不设 -hls_init_time：ffmpeg 8 实测它会拖累全部分片按 init 时长切割
   （issue #50：~4s 分片 + 10s 声明清单 → 客户端只播 ~40% 就到清单末尾
   跳歌、seek 到结尾落在媒体时间线外必跳歌）。
@@ -25,6 +25,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import os
 import re
 import shutil
@@ -117,6 +118,13 @@ def _produced_count(directory: str) -> int:
         return 0
 
 
+def _nonempty_file(path: str) -> bool:
+    try:
+        return os.path.isfile(path) and os.path.getsize(path) > 0
+    except OSError:
+        return False
+
+
 def _usable_cache(directory: str) -> dict | None:
     """磁盘上已完整（done + init 存在 + 分片覆盖声明清单）的转码缓存，返回 state。
 
@@ -126,21 +134,24 @@ def _usable_cache(directory: str) -> dict | None:
     state = _read_state(directory)
     if state.get("status") != "done":
         return None
-    if not os.path.isfile(os.path.join(directory, INIT_NAME)):
+    if not _nonempty_file(os.path.join(directory, INIT_NAME)):
         return None
     try:
-        declared = int(state.get("declared_count") or 1)
+        declared = max(int(state.get("declared_count") or 1),
+                       _declared_count(float(state.get("duration_s") or 0),
+                                       float(state.get("hls_time") or 10)))
     except (TypeError, ValueError):
         declared = 1
     if _produced_count(directory) < declared:
         return None
+    state["declared_count"] = declared
     return state
 
 
 def _declared_count(duration_s: float, hls_time: float) -> int:
     if duration_s <= 0 or hls_time <= 0:
         return 1
-    return max(1, int(duration_s // hls_time))
+    return max(1, math.ceil(duration_s / hls_time))
 
 
 def playlist_text(sess: Session) -> str:
@@ -217,7 +228,7 @@ async def _finalize_complete_output(sess: Session) -> None:
     客户端播到断点后首个缺失分片 404 跳歌、快进到结尾必 404，且残缺缓存被
     永久复用（每次播放都在同一位置断）。此处按产出覆盖度裁决：
     - 产出时长覆盖声明时长（ffprobe 本地产出，探针误差内）→ 转正；
-    - 无 ffprobe 时退化为分片数覆盖声明清单（floor，完整转码必满足）；
+    - 无 ffprobe 时退化为分片数覆盖完整声明清单；
     - 音源真实时长 ≈ 产出时长（元数据虚高）→ 按真实时长修正常量后转正，
       重播自然播完，不再向客户端声明永不存在的分片；
     - 其余（传输中途截断）→ 不转正、清目录，下次播放整轨重转。
@@ -479,10 +490,15 @@ def valid_segment_name(filename: str) -> bool:
 
 
 async def wait_file(path: str, sess: Session | None, timeout: float = 30.0) -> str | None:
-    """等分片落盘（temp_file 改名后出现即完整）；会话失败立即返回。"""
+    """等完整分片；init 需等首分片提交，确保 ffmpeg 已完成初始化写入。"""
     deadline = time.monotonic() + timeout
     while True:
-        if os.path.isfile(path):
+        ready = _nonempty_file(path)
+        if ready and os.path.basename(path) == INIT_NAME:
+            # ffmpeg writes init.mp4 directly, unlike the atomically renamed
+            # .m4s files. Its existence alone can expose an empty/partial init.
+            ready = _nonempty_file(os.path.join(os.path.dirname(path), "00000.m4s"))
+        if ready:
             return path
         if sess and sess.exit_event.is_set() and sess.status != "done":
             return None

@@ -28,7 +28,7 @@ from pathlib import Path
 import anyio
 import httpx
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import FileResponse, JSONResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
@@ -40,6 +40,7 @@ from proxy.env_merge import (  # noqa: E402
     render_env,
     write_env_atomic,
 )
+from proxy.quality_policy import validate_channel_qualities  # noqa: E402
 from proxy.fnlog import (  # noqa: E402
     RETENTION_DAYS,
     env_snapshot_lines,
@@ -111,6 +112,9 @@ SCHEMA: dict[str, dict] = {
     "LX_SOURCE_LIST": {"kind": "str", "default": "[]", "group": "lx", "reload": "hot", "label": "洛雪源列表（JSON 数组）"},
     "LX_SOURCES": {"kind": "csv", "default": "kg,wy,mg,kw", "group": "lx", "reload": "hot", "label": "lx 平台（按源声明推导）"},
     "FNMUSIC_QUALITY_MODE": {"kind": "enum", "values": ["high", "balanced", "smooth"], "default": "high", "group": "quality", "reload": "hot", "label": "音质偏好"},
+    "FNMUSIC_QQ_QUALITY": {"kind": "enum", "values": ["auto", "master", "lossless", "mp3_320", "mp3_128"], "default": "auto", "group": "quality", "reload": "hot", "label": "QQ 音乐音质"},
+    "FNMUSIC_CHANNEL_QUALITIES": {"kind": "str", "default": "{}", "group": "quality", "reload": "hot", "label": "各渠道音质"},
+    "FNMUSIC_ROAM_SOURCE": {"kind": "enum", "values": ["local", "qq", "kugou", "kuwo", "netease"], "default": "local", "group": "quality", "reload": "hot", "label": "漫游来源"},
     "FNMUSIC_DL_QUALITY": {"kind": "enum", "values": ["app", "original", "standard"], "default": "app", "group": "quality", "reload": "hot", "label": "下载音质"},
     "FNMUSIC_RECOMMEND_HOT": {"kind": "bool", "default": "true", "group": "recommend", "reload": "hot", "label": "热门榜单推荐"},
     "FNMUSIC_RECOMMEND_DAILY": {"kind": "bool", "default": "true", "group": "recommend", "reload": "hot", "label": "每日推荐"},
@@ -345,6 +349,8 @@ def _resident_flag(values: dict[str, str]) -> bool:
 
 def _resident_active(values: dict[str, str]) -> bool:
     """常驻生效判定：账号歌单或至少一份网易公共歌单需要 musicbox 供数。"""
+    if str(values.get("FNMUSIC_CONSOLE_NETEASE_ENABLED", "")).lower() in ("true", "1", "yes"):
+        return True
     if not _resident_flag(values):
         return False
     account = str(values.get("FNMUSIC_NETEASE_MY_PLAYLISTS", "")).strip().lower() in ("true", "1", "yes")
@@ -370,6 +376,8 @@ def _public_selection_rows(values: dict[str, str]) -> list:
     return selection if isinstance(selection, list) else []
 
 def _public_musicbox_needed(values: dict[str, str]) -> bool:
+    if str(values.get("FNMUSIC_CONSOLE_NETEASE_ENABLED", "")).lower() in ("true", "1", "yes"):
+        return True
     if not str(values.get("FNMUSIC_PUBLIC_PLAYLISTS_ENABLED", "")).strip().lower() in ("true", "1", "yes"):
         return False
     return any(
@@ -620,6 +628,8 @@ def _is_dir_within(child: str, parent: str) -> bool:
 
 
 def _normalize_value(key: str, raw) -> str:
+    if key == 'FNMUSIC_CHANNEL_QUALITIES':
+        return json.dumps(validate_channel_qualities(raw), ensure_ascii=False, sort_keys=True, separators=(',', ':'))
     if key == "LX_SOURCE_LIST":
         return _normalize_lx_source_list(raw)
     spec = SCHEMA[key]
@@ -1391,6 +1401,29 @@ async def api_public_playlists(target: str = "", request: Request = None):
     )
 
 
+# ------------------------------------------------- QQ 扫码（反代 musicdl） --
+
+@app.api_route("/api/qq/auth/{path:path}", methods=["GET", "POST"])
+async def qq_auth_proxy(path: str, request: Request):
+    allowed = {"status": "GET", "login": "POST", "login/check": "POST",
+               "verify": "POST", "logout": "POST"}
+    if path not in allowed or request.method != allowed[path]:
+        raise HTTPException(404, "unknown QQ auth endpoint")
+    preview_renew("musicdl")
+    body = await request.body()
+    if len(body) > 1024:
+        raise HTTPException(413, "request too large")
+    try:
+        resp = await get_http(request).request(
+            request.method, f"{CONF['musicdl_url']}/auth/qq/{path}",
+            content=body, headers={"Content-Type": "application/json"}, timeout=30.0,
+        )
+    except httpx.HTTPError:
+        raise HTTPException(502, "musicdl 服务暂不可达，请先启用或预览 musicdl 音源") from None
+    return Response(content=resp.content, status_code=resp.status_code,
+                    media_type="application/json", headers={"Cache-Control": "no-store"})
+
+
 # ------------------------------------------------- 网易扫码（反代 musicbox） --
 
 @app.api_route("/api/netease/auth/{path:path}", methods=["GET", "POST"])
@@ -1659,9 +1692,19 @@ async def api_logs_export():
 
 # ------------------------------------------------------------------ 静态前端 --
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from console_api import install_console_api  # noqa: E402
+install_console_api(app, sys.modules[__name__])
+
+
+@app.get('/advanced')
+async def advanced_index():
+    # Keep bookmarks working; the Ant Design console is the only frontend.
+    return RedirectResponse('./?page=storage-settings', status_code=307)
+
 @app.get("/")
 async def index():
-    return FileResponse(STATIC_DIR / "index.html")
+    return FileResponse(STATIC_DIR / "console.html")
 
 
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")

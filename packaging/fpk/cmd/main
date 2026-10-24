@@ -10,10 +10,37 @@ SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 UNIT="fnmusic-ext.service"
 
+fnmusic_running_ready() {
+    # App Center may lose its running state after an external deployment.
+    # A repeated start must acknowledge this healthy installation without
+    # rebuilding its image or interrupting playback. Never borrow another repo.
+    local owner
+    systemctl is-active --quiet "${UNIT}" 2>/dev/null || return 1
+    owner="$(systemctl show "${UNIT}" -p WorkingDirectory --value 2>/dev/null)" || return 1
+    [ -n "${owner}" ] || return 1
+    [ "$(cd "${owner}" 2>/dev/null && pwd -P)" = "$(cd "${FNMUSIC_REPO_DIR}" && pwd -P)" ] || return 1
+    # The official music SPA also returns 200 for unknown paths: check JSON,
+    # including dependency readiness, rather than accepting HTTP status alone.
+    curl -fsS --connect-timeout 2 --max-time 5 \
+        --unix-socket /var/run/trim_music.socket http://localhost/_ext/healthz 2>/dev/null \
+        | python3 -c '
+import json, sys
+try:
+    health = json.load(sys.stdin)
+    ready = health.get("ok") is True and health.get("degraded") is False
+except (ValueError, AttributeError):
+    ready = False
+sys.exit(0 if ready else 1)
+' 2>/dev/null
+}
+
 case "${1:-}" in
     start)
         [ -n "${FNMUSIC_REPO_DIR}" ] || fnmusic_fail "应用文件缺失（install.sh 不存在），请卸载后重新安装"
         [ -f "${FNMUSIC_REPO_DIR}/.env" ] || fnmusic_fail "尚未完成安装配置（.env 缺失），请卸载后重新安装"
+        if fnmusic_running_ready; then
+            exit 0
+        fi
         # extend.sh is idempotent: ensures the unit exists, starts the proxy and
         # takes over /var/run/trim_music.socket. Non-TTY never prompts.
         if ! bash "${FNMUSIC_REPO_DIR}/extend.sh" >> "${FNMUSIC_LOG}" 2>&1; then

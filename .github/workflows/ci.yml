@@ -9,6 +9,23 @@ permissions:
   contents: read
 
 jobs:
+  console:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Build bundled console and check committed assets
+        working-directory: webui-service/console
+        run: |
+          corepack enable
+          corepack prepare pnpm@11.25.0 --activate
+          pnpm install --frozen-lockfile
+          pnpm test
+          pnpm build
+          git diff --exit-code -- ../static/console/
+
   test:
     runs-on: ubuntu-latest
     strategy:
@@ -48,7 +65,7 @@ jobs:
         run: >
           python -m py_compile proxy/app.py proxy/recommend.py proxy/publicplaylists.py proxy/env_merge.py proxy/version.py
           lxmusic-service/app.py lxmusic-service/lxserver_client.py lxmusic-service/verify_source.py
-          musicdl-service/app.py musicdl-service/hardening.py
+          musicdl-service/app.py musicdl-service/hardening.py musicdl-service/qq_auth.py musicdl-service/qq_catalog.py musicdl-service/kugou_catalog.py musicdl-service/kuwo_catalog.py
           musicbox-service/app.py musicbox-service/runner.py musicbox-service/netease_ext.py musicbox-service/playback.py
           webui-service/app.py
 

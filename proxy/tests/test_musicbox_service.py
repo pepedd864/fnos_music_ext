@@ -1137,3 +1137,54 @@ def test_playable_recommendation_rows_marks_vip(monkeypatch):
     by_id = {r["song_id"]: r for r in rows}
     assert by_id[102].get("needs_vip") is True
     assert "needs_vip" not in by_id[101]
+
+
+def test_console_netease_catalog_search_does_not_resolve_audio(monkeypatch):
+    monkeypatch.setattr(musicbox_app, 'search_web_fallback', lambda *args, **kwargs: [{'song_id': 42, 'name': 'Song', 'artist': 'Singer', 'album': 'Album', 'duration': 180000, 'album_pic_url': 'https://cover.test/a.jpg'}])
+    monkeypatch.setattr(musicbox_app, 'filter_playable_song_ids', lambda *args: pytest.fail('catalog must not probe song URLs'))
+    with TestClient(app) as client:
+        result = client.get('/api/v1/catalog/search?q=Song&page=2').json()
+    assert result['items'][0] == {'id': 'netease:42', 'source': 'netease', 'title': 'Song', 'artist': 'Singer', 'album': 'Album', 'duration_s': 180, 'cover_url': 'https://cover.test/a.jpg'}
+
+
+def test_console_netease_recommend_requires_login_and_paginates_metadata(monkeypatch):
+    monkeypatch.setattr(musicbox_app, 'recommendation_scope', lambda: 'opaque-account-scope')
+    monkeypatch.setattr(musicbox_app, 'check_is_logged_in', lambda: False)
+    with TestClient(app) as client:
+        assert client.get('/api/v1/catalog/recommend').status_code == 401
+        monkeypatch.setattr(musicbox_app, 'check_is_logged_in', lambda: True)
+        monkeypatch.setattr(musicbox_app, 'exec_musicbox', lambda args: {'ok': True, 'data': [{'song_id': i + 1, 'name': 'Song'} for i in range(25)]})
+        monkeypatch.setattr(musicbox_app, 'filter_playable_song_ids', lambda *args: pytest.fail('recommendation metadata must not resolve audio'))
+        batch = client.get('/api/v1/catalog/recommend?cursor=1').json()
+    assert len(batch['items']) == 10 and batch['items'][0]['id'] == 'netease:11'
+    assert batch['next_cursor'] == 2 and batch['has_more']
+    assert batch['scope'] == 'opaque-account-scope'
+
+
+def test_netease_roam_scope_is_private_and_changes_with_login(monkeypatch):
+    from types import SimpleNamespace
+    import httpx
+    jar = httpx.Cookies({'MUSIC_U': 'synthetic-private-account-a'}).jar
+    api = SimpleNamespace(session=SimpleNamespace(cookies=jar))
+    monkeypatch.setattr(netease_ext, '_get_api_locked', lambda: api)
+    first = netease_ext.recommendation_scope()
+    assert len(first) == 64 and 'synthetic' not in first
+    api.session.cookies = httpx.Cookies({'MUSIC_U': 'synthetic-private-account-b'}).jar
+    assert netease_ext.recommendation_scope() != first
+
+
+def test_netease_session_and_inflight_recommendations_reject_account_switch(monkeypatch):
+    scope = ['account-a']
+    monkeypatch.setattr(musicbox_app, 'check_is_logged_in', lambda: True)
+    monkeypatch.setattr(musicbox_app, 'recommendation_scope', lambda: scope[0])
+    def recommend(args):
+        scope[0] = 'account-b'
+        return {'ok': True, 'data': [{'song_id': 1, 'name': 'Old account song'}]}
+    monkeypatch.setattr(musicbox_app, 'exec_musicbox', recommend)
+    with TestClient(app) as client:
+        session = client.get('/api/v1/catalog/session')
+        assert session.json()['scope'] == 'account-a'
+        assert session.headers['cache-control'] == 'no-store'
+        assert client.get('/api/v1/catalog/recommend').status_code == 409
+        monkeypatch.setattr(musicbox_app, 'check_is_logged_in', lambda: False)
+        assert client.get('/api/v1/catalog/session').status_code == 401

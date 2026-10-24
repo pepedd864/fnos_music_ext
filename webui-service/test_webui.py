@@ -64,6 +64,33 @@ def authed_client():
         yield client
 
 
+def test_qq_quality_is_validated_and_saved_without_process_restart(env_file, svctl):
+    with authed_client() as client:
+        config = client.get("/api/config").json()
+        assert config["values"]["FNMUSIC_QQ_QUALITY"] == "auto"
+        assert client.put("/api/config", json={"values": {"FNMUSIC_QQ_QUALITY": "ultra"}}).status_code == 400
+        for quality in ("master", "lossless", "mp3_320", "mp3_128", "auto"):
+            response = client.put("/api/config", json={"values": {"FNMUSIC_QQ_QUALITY": quality}})
+            assert response.status_code == 200
+            assert client.get("/api/config").json()["values"]["FNMUSIC_QQ_QUALITY"] == quality
+    assert not any(call[0] in ("start", "stop", "restart") for call in svctl.calls)
+
+
+def test_channel_quality_api_validates_partial_preferences_and_preserves_legacy(env_file, svctl):
+    with authed_client() as client:
+        before = webui.read_env()
+        saved = client.put('/api/config', json={'values': {'FNMUSIC_CHANNEL_QUALITIES': '{"netease":"exhigh","lx:kw":"standard"}'}})
+        assert saved.status_code == 200
+        after = webui.read_env()
+        assert {key: after[key] for key in before} == before
+        assert client.put('/api/config', json={'values': {'FNMUSIC_CHANNEL_QUALITIES': '{"kuwo":"lossless"}'}}).status_code == 400
+        rows = {row['id']: row for row in client.get('/api/console/quality').json()['channels']}
+        assert rows['netease']['preference'] == 'exhigh'
+        assert rows['lx:kw']['preference'] == 'standard'
+        assert not rows['kuwo']['configurable']
+    assert not any(call[0] in ('start', 'stop', 'restart') for call in svctl.calls)
+
+
 @pytest.fixture
 def svctl(monkeypatch):
     calls: list[tuple] = []
@@ -91,6 +118,27 @@ def _mock_http(handler):
     webui.app.state.http = httpx.AsyncClient(transport=httpx.MockTransport(handler))
 
 
+@pytest.mark.parametrize("path,method", [("status", "GET"), ("login", "POST"),
+    ("login/check", "POST"), ("verify", "POST"), ("logout", "POST")])
+def test_qq_auth_is_admin_only_and_proxies_exact_paths(env_file, path, method):
+    with TestClient(webui.app) as client:
+        assert client.request(method, f"/api/qq/auth/{path}").status_code == 403
+    calls = []
+    with authed_client() as client:
+        def handler(request):
+            calls.append(request)
+            return httpx.Response(200, json={"state": "scan"})
+        _mock_http(handler)
+        response = client.request(method, f"/api/qq/auth/{path}", json={} if method == "POST" else None)
+        assert response.status_code == 200
+        assert response.headers["cache-control"] == "no-store"
+        assert calls[0].url.path == f"/auth/qq/{path}"
+        assert calls[0].method == method
+        assert client.get("/api/qq/auth/credential").status_code == 404
+        assert client.get("/api/qq/auth/logout").status_code == 404
+        assert client.post("/api/qq/auth/login", content="x" * 1025).status_code == 413
+
+
 # ------------------------------------------------------------------ 配置视图 ---
 
 def test_config_view_merges_defaults(env_file):
@@ -105,6 +153,7 @@ def test_config_view_merges_defaults(env_file):
         assert rj["schema"]["FNMUSIC_QUALITY_MODE"]["values"] == ["high", "balanced", "smooth"]
         assert rj["schema"]["FNMUSIC_DL_QUALITY"]["values"] == ["app", "original", "standard"]
         assert rj["schema"]["FNMUSIC_DL_QUALITY"]["default"] == "app"
+        assert rj['schema']['FNMUSIC_ROAM_SOURCE']['values'] == ['local', 'qq', 'kugou', 'kuwo', 'netease']
 
 
 # ------------------------------------------------------------------ PUT 校验 ---
@@ -887,7 +936,7 @@ def test_public_playlist_proxy_routes_and_strips_provider(env_file, monkeypatch)
     assert key == ("musicbox", "", (("channel", "charts"),))
 
 # musicbox CLI（auth ... --json）的真实输出契约：{ok, data:{...}} 信封结构。
-# 前端 static/app.js pollQr/checkQrStatus 与 netease_login.sh 均按此解析（code 在 data 里），
+# 新控制台 neteaseCode 与 netease_login.sh 均按此解析（code 在 data 里），
 # 与 proxy/tests/test_musicbox_service.py 的 CLI mock 保持一致。
 NETEASE_LOGIN_ENVELOPE = {"ok": True, "data": {"unikey": "KEY1", "qr_ascii": "QR",
                                                "qr_url": "https://music.163.com/login?codekey=KEY1"}}
@@ -915,7 +964,7 @@ def test_netease_auth_proxy_passthrough(env_file, monkeypatch):
         r = client.post("/api/netease/auth/login")
         assert r.status_code == 200 and r.json()["data"]["unikey"] == "KEY1"
         r2 = client.get("/api/netease/auth/login/check", params={"unikey": "KEY1"})
-        # 信封结构原样透传：code 必须在 data 里（前端据此解析，回归见 test_app_js.py）
+        # 信封结构原样透传：code 必须在 data 里（前端据此解析，回归见 test_console_frontend.py）
         assert r2.status_code == 200 and r2.json()["data"]["code"] == 801
         assert hits["/api/v1/auth/login/check"]["unikey"] == "KEY1"  # 查询串透传
         r4 = client.get("/api/netease/auth/status")
@@ -1000,7 +1049,17 @@ def test_index_served():
         # 桌面网关把整段 /app/fnmusic-ext 前缀转到这里
         via_desktop = client.get("/app/fnmusic-ext/")
         assert via_desktop.status_code == 200
-        assert "/app/fnmusic-ext/static/app.js" in via_desktop.text
+        assert "/app/fnmusic-ext/static/console/app.js" in via_desktop.text
+        for path in ('/advanced', '/app/fnmusic-ext/advanced'):
+            redirect = client.get(path, follow_redirects=False)
+            assert redirect.status_code == 307
+            assert redirect.headers['location'] == './?page=storage-settings'
+            migrated = client.get(path)
+            assert migrated.status_code == 200
+            assert '/static/console/app.js' in migrated.text
+            assert migrated.url.params['page'] == 'storage-settings'
+        for filename in ('index.html', 'app.js', 'style.css'):
+            assert client.get('/static/' + filename).status_code == 404
         assert client.get("/app/fnmusic-ext/static/icon.png").status_code == 200
 
 
@@ -1184,13 +1243,6 @@ def test_public_playlist_selection_rejects_invalid_payload(env_file, svctl):
         assert saved.status_code == 400
         assert "公共歌单" in saved.json()["error"]
 
-
-def test_public_playlist_save_contract_strips_display_only_fields():
-    """管理页内部可保留展示字段，但写入配置必须只保存稳定身份四字段。"""
-    js = (HERE / "static" / "app.js").read_text(encoding="utf-8")
-    needle = "publicSelection.map(({ provider, source, kind, id }) => ({ provider, source, kind, id }))"
-    assert needle in js
-    assert "_name: item.name" in js and "_cover_url: item.cover_url" in js
 
 
 def test_resident_disable_stops_musicbox_for_memory(env_file, svctl, resident_state):
@@ -1715,11 +1767,12 @@ def test_about_requires_admin(about_env):
 
 def test_html_and_static_served_with_no_cache(about_env):
     """升级后 WebView 不得沿用旧页面：HTML/静态资源必须带 no-cache（协商缓存）。"""
-    (about_env / "static" / "app.js").write_text("// js", encoding="utf-8")
-    (about_env / "static" / "index.html").write_text("<html></html>", encoding="utf-8")
+    (about_env / "static" / "console").mkdir()
+    (about_env / "static" / "console" / "app.js").write_text("// js", encoding="utf-8")
+    (about_env / "static" / "console.html").write_text("<html></html>", encoding="utf-8")
     with TestClient(webui.app) as client:
         assert client.get("/").headers["cache-control"] == "no-cache"
-        assert client.get("/static/app.js").headers["cache-control"] == "no-cache"
+        assert client.get("/static/console/app.js").headers["cache-control"] == "no-cache"
         # 接口响应不受影响（本来就是动态的）
         r = client.get("/api/about")
     assert "cache-control" not in r.headers
@@ -2157,48 +2210,137 @@ def test_update_check_requires_admin(env_file, update_cache_clean):
     assert r.status_code == 403
 
 
-def test_hidden_toggled_elements_not_defeated_by_display():
-    """靠 hidden 属性切换显隐的元素，其类规则不得缺 [hidden] 兜底。
+def test_console_settings_cover_the_complete_config_schema():
+    """Deleting the old frontend must not strand any supported configuration."""
+    sources = "\n".join(path.read_text(encoding="utf-8")
+                        for path in (HERE / "console" / "src").glob("*.*")
+                        if path.suffix in {".js", ".jsx"})
+    assert set(webui.SCHEMA) <= {key for key in webui.SCHEMA if key in sources}
+    html = (HERE / "static" / "console.html").read_text(encoding="utf-8")
+    assert '/static/console/app.js' in html
+    for filename in ("index.html", "app.js", "style.css"):
+        assert not (HERE / "static" / filename).exists()
+    assert "'/advanced'" not in sources
 
-    作者样式里的 display 声明（如 .modal-mask{display:flex}、.badge{display:
-    inline-block}）会压过 UA 样式表的 [hidden]{display:none}——检查更新弹窗
-    曾因此打开页面即常显、遮罩盖住整页且点取消也关不掉。用静态 HTML+CSS 交叉
-    断言锁死该类别回归（渲染级验证需真实浏览器，以规则存在性代理）。"""
-    import re as _re
 
-    html = (HERE / "static" / "index.html").read_text(encoding="utf-8")
-    css = (HERE / "static" / "style.css").read_text(encoding="utf-8")
-    # 初始带 hidden 属性的元素：<tag ... id/class/hidden 属性顺序不定>
-    # aria-hidden="true" 的装饰元素不属于显隐切换，正则要求 hidden 是独立属性
-    entries = []
-    for m in _re.finditer(r"<\w+[^>]*?\shidden(?:\s|>|[^\w-])", html):
-        tag_html = m.group(0)
-        el_id = _re.search(r'\bid="([\w-]+)"', tag_html)
-        classes = _re.search(r'\bclass="([^"]*)"', tag_html)
-        if el_id and classes:
-            entries.append((el_id.group(1), classes.group(1)))
-    # CSS 里声明了 display:（值非 none）且选择器不带 [hidden] 的块
-    visible_decl: list[tuple[str, str]] = []  # (选择器, display 值)
-    for block in css.split("}"):
-        sel, sep, body = block.partition("{")
-        if not sep or "[hidden]" in sel:
-            continue
-        m = _re.search(r"display\s*:\s*([^;]+)", body)
-        if m and m.group(1).strip() != "none":
-            visible_decl.append((sel, m.group(1)))
-    assert visible_decl, "CSS 解析异常：未提取到任何 display 声明"
+def test_kuwo_recommendation_without_artwork_uses_lazy_cover_links(env_file):
+    calls = []
+    def handler(request):
+        calls.append(request.url.path)
+        return httpx.Response(200, json={'items': [{'id': 'kuwo:624683929', 'title': 'Song', 'cover_url': ''}], 'has_more': True})
+    with authed_client() as client:
+        _mock_http(handler)
+        result = client.get('/api/console/platforms/kuwo/recommend').json()
+    assert result['items'][0]['cover_url'] == '/app/fnmusic-ext/api/console/platforms/kuwo/cover?rid=624683929'
+    assert calls == ['/catalog/kuwo/recommend']  # Never wait for per-track images here.
 
-    for el_id, classes in entries:
-        for cls in classes.split():
-            # (?![\w-]) 精确到类名边界：.btn 不匹配 .btn-row / .lx-item-btns
-            defeats_hidden = any(
-                _re.search(rf"\.{_re.escape(cls)}(?![\w-])", sel) for sel, _ in visible_decl)
-            if not defeats_hidden:
-                continue
-            has_fallback = (
-                _re.search(rf"#{_re.escape(el_id)}\[hidden\][^{{]*{{[^}}]*display\s*:\s*none", css)
-                or _re.search(rf"\.{_re.escape(cls)}\[hidden\][^{{]*{{[^}}]*display\s*:\s*none", css))
-            assert has_fallback, (
-                f"#{el_id} 靠 hidden 属性切换，但 .{cls} 的 display 声明会压过 UA 的 "
-                f"[hidden] 规则导致常显——需补 .{cls}[hidden] 或 #{el_id}[hidden] "
-                f"{{ display: none; }} 兜底")
+
+def test_kuwo_cover_rejects_non_numeric_ids_before_any_fetch(env_file):
+    with authed_client() as client:
+        assert client.get('/api/console/platforms/kuwo/cover?rid=http://127.0.0.1').status_code == 400
+
+
+def test_kuwo_cover_is_admin_only_and_delivers_image_bytes(env_file, monkeypatch):
+    from cover_proxy import KuwoCovers
+    def handler(request):
+        if request.url.host == 'artistpicserver.kuwo.cn':
+            return httpx.Response(200, text='http://img1.kwcdn.kuwo.cn/star/albumcover/cover.jpg')
+        return httpx.Response(200, content=b'\xff\xd8\xffimage')
+    with TestClient(webui.app) as client:
+        assert client.get('/api/console/platforms/kuwo/cover?rid=42').status_code == 403
+    with authed_client() as client:
+        monkeypatch.setattr(webui.app.state, 'kuwo_covers', KuwoCovers(httpx.MockTransport(handler)))
+        response = client.get('/api/console/platforms/kuwo/cover?rid=42')
+    assert response.status_code == 200 and response.content == b'\xff\xd8\xffimage'
+    assert response.headers['content-type'] == 'image/jpeg'
+    assert response.headers['cache-control'].startswith('private')
+    assert response.headers['x-content-type-options'] == 'nosniff'
+
+
+def test_console_platform_registry_masks_auth_and_saves_enable_without_restart(env_file, svctl):
+    with authed_client() as client:
+        _mock_http(lambda request: httpx.Response(200, json={'state': 'stored', 'logged_in': True, 'account': '****1234', 'musickey': 'must-not-forward'}))
+        response = client.get('/api/console/platforms')
+        assert response.headers['cache-control'] == 'no-store'
+        platforms = response.json()['items']
+        assert [p['id'] for p in platforms] == ['qq', 'kugou', 'kuwo', 'netease']
+        assert platforms[0]['status'] == '已登录'
+        assert platforms[1]['status'] == '已登录'
+        assert platforms[2]['status'] == '公开渠道 · 无需登录'
+        assert platforms[1]['capabilities']['login']
+        assert platforms[2]['capabilities']['recommend_kind'] == 'public'
+        assert 'must-not-forward' not in response.text
+        assert client.put('/api/console/platforms/qq', json={'enabled': True}).status_code == 200
+        assert 'QQMusicClient' in webui.read_env()['FNMUSIC_ONLINE_SOURCES']
+        assert client.put('/api/console/platforms/qq', json={'enabled': False}).status_code == 200
+        assert 'QQMusicClient' not in webui.read_env()['FNMUSIC_ONLINE_SOURCES']
+    assert not any(c[0] in {'restart', 'stop', 'start'} for c in svctl.calls)
+
+
+def test_console_search_respects_enable_and_never_leaks_direct_url(env_file):
+    def handler(request):
+        assert request.url.path in ('/catalog/kuwo/search', '/catalog/kuwo/recommend')
+        if request.url.path.endswith('search'): assert request.url.params['q'] == 'abc'
+        return httpx.Response(200, json={'items': [{'id': 'kuwo:123', 'title': 'Title', 'artist': 'Artist', 'download_url': 'SECRET', 'download_headers': {'Cookie': 'SECRET'}}], 'errors': {}})
+    with authed_client() as client:
+        _mock_http(handler)
+        assert client.get('/api/console/platforms/qq/search?q=abc').status_code == 409
+        result = client.get('/api/console/platforms/kuwo/search?q=abc')
+        assert result.status_code == 200
+        assert result.json()['items'][0]['id'] == 'kuwo:123'
+        assert 'SECRET' not in result.text
+        assert client.get('/api/console/platforms/kuwo/recommend').json()['recommend_kind'] == 'public'
+        assert client.get('/api/console/platforms/kuwo/search?q=abc&page=-1').status_code == 400
+        assert client.post('/api/library', json={'action': 'list'}).status_code == 501
+    with TestClient(webui.app) as client:
+        assert client.get('/api/console/platforms').status_code == 403
+        assert client.post('/api/library', json={'action': 'list'}).status_code == 403
+
+
+@pytest.mark.parametrize('pid', ['qq', 'kugou'])
+def test_console_auth_is_generic_admin_only_and_whitelists_public_fields(env_file, pid):
+    with TestClient(webui.app) as client:
+        assert client.post(f'/api/console/platforms/{pid}/auth/login', json={}).status_code == 403
+    with authed_client() as client:
+        def handler(request):
+            assert request.url.path == f'/auth/{pid}/login'
+            return httpx.Response(200, json={'image': 'data:image/png;base64,fixture', 'session_id': 'fixture', 'expires_in': 180, 'token': 'SECRET', 'cookie': 'SECRET'})
+        _mock_http(handler)
+        result = client.post(f'/api/console/platforms/{pid}/auth/login', json={})
+        assert result.status_code == 200 and 'SECRET' not in result.text
+        assert result.headers['cache-control'] == 'no-store'
+        assert client.get(f'/api/console/platforms/{pid}/auth/logout').status_code == 404
+        assert client.post(f'/api/console/platforms/{pid}/auth/credential', json={}).status_code == 404
+        assert client.post(f'/api/console/platforms/{pid}/auth/login', content='x' * 1025).status_code == 413
+
+
+def test_console_netease_parallel_enable_preserves_current_engine_and_qq_config(env_file, svctl):
+    before = webui.read_env()
+    with authed_client() as client:
+        _mock_http(lambda request: httpx.Response(200, json={'ok': True, 'data': {'logged_in': False}}))
+        assert client.put('/api/console/platforms/netease', json={'enabled': True}).status_code == 200
+        after = webui.read_env()
+        assert after['FNMUSIC_CONSOLE_NETEASE_ENABLED'] == 'true'
+        assert all(after[k] == value for k, value in before.items())
+        rows = {p['id']: p for p in client.get('/api/console/platforms').json()['items']}
+        assert rows['netease']['enabled'] and rows['netease']['status'] == '待登录'
+        assert rows['netease']['capabilities']['recommend_kind'] == 'personal'
+        assert client.post('/api/console/platforms/kuwo/auth/login', json={}).status_code == 404
+    assert not any(call[0] in ('stop', 'restart') for call in svctl.calls)
+
+
+def test_console_netease_search_and_recommend_normalize_and_filter_sensitive_fields(env_file):
+    webui.write_env({'FNMUSIC_CONSOLE_NETEASE_ENABLED': 'true'})
+    calls = []
+    def handler(request):
+        calls.append(request.url.path)
+        assert request.url.path in ('/api/v1/catalog/search', '/api/v1/catalog/recommend')
+        return httpx.Response(200, json={'items': [{'id': 'netease:42', 'title': 'Song', 'download_url': 'SECRET', 'cookie': 'SECRET'}], 'next_cursor': 1, 'has_more': False})
+    with authed_client() as client:
+        _mock_http(handler)
+        for endpoint in ('search?q=Song&page=2', 'recommend?cursor=0'):
+            result = client.get('/api/console/platforms/netease/' + endpoint)
+            assert result.status_code == 200
+            assert result.json()['items'][0]['platform'] == 'netease'
+            assert 'SECRET' not in result.text
+    assert calls == ['/api/v1/catalog/search', '/api/v1/catalog/recommend']

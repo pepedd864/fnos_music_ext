@@ -88,6 +88,7 @@ rsync -a --delete \
     --exclude='tests/' --exclude='docs/' --exclude='pytest.ini' \
     --exclude='CONTRIBUTING.md' \
     --exclude='.venv*/' --exclude='__pycache__/' --exclude='.pytest_cache/' \
+    --exclude='node_modules/' --exclude='webui-service/console/' --exclude='webui-service/prototype-console/' \
     --exclude='*.pyc' --exclude='*.log' --exclude='*.logzip' --exclude='logs/' --exclude='/logs' \
     --exclude='*.part' --exclude='.DS_Store' \
     --exclude='cache/' --exclude='sources-data/' --exclude='backup/' \

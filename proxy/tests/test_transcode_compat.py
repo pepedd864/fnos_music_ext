@@ -220,21 +220,22 @@ def seed_cached_audio(guid: str, data: bytes = b"MP3DATA" * 200, ext: str = "mp3
 
 # === transcode 模块：playlist 合成 ===
 
-def test_playlist_text_floor_count_and_tail():
-    sess = tc.Session(guid="g", directory="/tmp/x", duration_s=269.9, hls_time=10.0, declared_count=26)
+def test_playlist_text_includes_final_partial_segment():
+    sess = tc.Session(guid="g", directory="/tmp/x", duration_s=269.9, hls_time=10.0,
+                      declared_count=tc._declared_count(269.9, 10))
     text = tc.playlist_text(sess)
     assert "#EXT-X-VERSION:7" in text
     assert '#EXT-X-MAP:URI="init.mp4"' in text
     assert "#EXT-X-ENDLIST" in text
-    assert text.count("#EXTINF:") == 26
-    assert "00000.m4s" in text and "00025.m4s" in text
-    assert "00026.m4s" not in text          # floor：宁可少一片不越界
-    assert "#EXTINF:19.900," in text        # 尾片 = 269.9 - 10*25
+    assert text.count("#EXTINF:") == 27
+    assert "00000.m4s" in text and "00026.m4s" in text
+    assert "00027.m4s" not in text
+    assert "#EXTINF:9.900," in text
 
 
 def test_declared_count_edges():
     assert tc._declared_count(0, 10) == 1
-    assert tc._declared_count(269.9, 10) == 26
+    assert tc._declared_count(269.9, 10) == 27
     assert tc._declared_count(10, 10) == 1
     assert tc._declared_count(240, 10) == 24
 
@@ -350,13 +351,13 @@ def test_inflated_metadata_patches_declared_count(tmp_path, fake_ffmpeg, fake_ff
         # 磁盘 state 已按真实时长修正
         state = json.load(open(os.path.join(sess.directory, tc.STATE_NAME)))
         assert state["duration_s"] == 118.0
-        assert state["declared_count"] == 11
+        assert state["declared_count"] == 12
         # 转正缓存可复用，且 playlist 声明与产出一致
         cached = tc.peek_cached(FAKE_KUWO, root)
-        assert cached is not None and cached.declared_count == 11
+        assert cached is not None and cached.declared_count == 12
         text = tc.playlist_text(cached)
-        assert text.count("#EXTINF:") == 11
-        assert "00010.m4s" in text and "00011.m4s" not in text
+        assert text.count("#EXTINF:") == 12
+        assert "00011.m4s" in text and "00012.m4s" not in text
 
     asyncio.run(flow())
 
@@ -419,6 +420,55 @@ def test_wait_file_returns_path_and_none_on_failure(tmp_path, fake_ffmpeg):
     no, yes = asyncio.run(flow())
     assert no is None
     assert yes == existing
+
+
+def test_wait_init_until_first_segment_is_complete(tmp_path):
+    """ffmpeg creates init before flushing it; don't serve that partial file."""
+    init = tmp_path / tc.INIT_NAME
+    init.write_bytes(b"")
+
+    async def flow():
+        async def produce():
+            await asyncio.sleep(0.02)
+            init.write_bytes(b"partial")
+            await asyncio.sleep(0.02)
+            init.write_bytes(b"complete-init")
+            (tmp_path / "00000.m4s").write_bytes(b"complete-segment")
+
+        producer = asyncio.create_task(produce())
+        path = await tc.wait_file(str(init), None, timeout=1)
+        ready = producer.done()
+        content = init.read_bytes()
+        await producer
+        return path, ready, content
+
+    path, ready, content = asyncio.run(flow())
+    assert path == str(init) and ready and content == b"complete-init"
+
+
+def test_wait_file_rejects_empty_segment(tmp_path):
+    segment = tmp_path / "00000.m4s"
+    segment.touch()
+    assert asyncio.run(tc.wait_file(str(segment), None, timeout=0)) is None
+
+
+def test_usable_cache_rejects_empty_init(tmp_path):
+    directory = _mk_done_cache(str(tmp_path), FAKE_KUWO, 10000, age_s=0)
+    with open(os.path.join(directory, tc.INIT_NAME), "wb"):
+        pass
+    assert tc._usable_cache(directory) is None
+
+
+def test_legacy_floor_cache_recovers_final_segment(tmp_path):
+    directory = _mk_done_cache(str(tmp_path), FAKE_KUWO, 10000, age_s=0)
+    state_path = os.path.join(directory, tc.STATE_NAME)
+    state = json.load(open(state_path))
+    state.update(duration_s=99.2, declared_count=9)
+    with open(state_path, "w") as stream:
+        json.dump(state, stream)
+    cached = tc.peek_cached(FAKE_KUWO, str(tmp_path))
+    assert cached is not None and cached.declared_count == 10
+    assert "00009.m4s" in tc.playlist_text(cached)
 
 
 def test_quit_session_kills_and_removes_halfway(tmp_path, fake_ffmpeg):

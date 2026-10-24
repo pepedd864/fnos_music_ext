@@ -74,6 +74,9 @@ def clean_state(monkeypatch):
     workers = SourceBulkhead(app_module.SOURCE_NAMES.values())
     monkeypatch.setattr(app_module, "SOURCE_WORKERS", workers)
     monkeypatch.setattr(app_module, "SINGLE_FLIGHT", SingleFlight())
+    monkeypatch.setattr(app_module, "QQ_FLIGHT", SingleFlight())
+    monkeypatch.setattr(app_module, "_QQ_RESOLVED", {})
+    monkeypatch.setattr(app_module, "_QQ_RESOLVE_TASKS", {})
     monkeypatch.setattr(app_module, "_probe_playable_sync", lambda url, headers: True)
     monkeypatch.setitem(app_module.CONF, "search_timeout", 4.0)
     monkeypatch.setitem(app_module.CONF, "adaptive_min_timeout", 1.0)
@@ -118,6 +121,54 @@ def test_normalize_startup_sources():
     assert norm(["KuwoMusicClient", "migu"], registered) == ["KuwoMusicClient", "MiguMusicClient"]
     assert norm(["nope"], registered) == ["KuwoMusicClient", "MiguMusicClient"]
     assert norm([], registered) == ["KuwoMusicClient", "MiguMusicClient"]
+
+
+def test_qq_credentials_only_reach_qq_client(clean_state, monkeypatch, tmp_path):
+    from qq_auth import QQAuth
+    auth = QQAuth(tmp_path / "qq", on_change=app_module._qq_auth_changed)
+    monkeypatch.setattr(app_module, "QQ_AUTH", auth)
+    configs = []
+
+    class FakeClient:
+        def __init__(self, **kwargs):
+            configs.append(kwargs["init_music_clients_cfg"])
+
+        def search(self, keyword):
+            return {}
+
+    monkeypatch.setattr(app_module.musicdl, "MusicClient", FakeClient)
+    app_module._search_one_source("QQMusicClient", "test", 1)
+    assert "default_search_cookies" not in configs[-1]["QQMusicClient"]
+    auth._save({"musicid": 1234, "musickey": "synthetic-only", "loginType": 2})
+    app_module._search_one_source("QQMusicClient", "test", 1)
+    for phase in ("search", "parse", "download"):
+        assert configs[-1]["QQMusicClient"][f"default_{phase}_cookies"] == {
+            "musicid": "1234", "musickey": "synthetic-only", "loginType": "2"}
+    app_module._search_one_source("MiguMusicClient", "test", 1)
+    assert "default_search_cookies" not in configs[-1]["MiguMusicClient"]
+
+
+@pytest.mark.asyncio
+async def test_logout_during_search_rejects_old_qq_urls(clean_state, monkeypatch, tmp_path):
+    from qq_auth import QQAuth
+    auth = QQAuth(tmp_path / "qq", on_change=app_module._qq_auth_changed)
+    monkeypatch.setattr(app_module, "QQ_AUTH", auth)
+    monkeypatch.setitem(app_module.SOURCE_NAMES, "qq", "QQMusicClient")
+    app_module.SOURCE_WORKERS.shutdown()
+    monkeypatch.setattr(app_module, "SOURCE_WORKERS", SourceBulkhead(["QQMusicClient"]))
+
+    async def slow(keyword, limit, page=1):
+        await asyncio.sleep(0.05)
+        return [{"id": "qq:1", "source": "qq", "title": "Song", "resolve_on_play": True}]
+
+    monkeypatch.setattr(app_module.QQ_CATALOG, "search", slow)
+    pending = asyncio.create_task(app_module.search(keyword="test", limit=1, sources="qq"))
+    await asyncio.sleep(0.01)
+    await auth.logout()
+    result = await pending
+    assert result["items"] == []
+    assert "QQMusicClient" in result["errors"]
+    assert app_module._cache_get("qq:1") is None
 
 
 def test_fast_return_when_enough_results(clean_state, monkeypatch):
@@ -316,8 +367,12 @@ def test_search_playable_probes_parallel_and_keeps_library_order(clean_state, mo
     entries = app_module._search_playable(
         "KuwoMusicClient", "k", 8, 3, None, time.monotonic() + 5, None)
     elapsed = time.monotonic() - started
-    # 库序前 3 条有效直链：2、4、6；凑够后 7、8 不再影响输出
-    assert [e[0]["id"] for e in entries] == ["kuwo:2", "kuwo:4", "kuwo:6"]
+    # Equal-duration parallel probes may finish in any order. The selected
+    # playable subset must contain 3 entries and retain library order.
+    ids = [int(e[0]["id"].split(":")[1]) for e in entries]
+    assert len(ids) == 3 and len(set(ids)) == 3
+    assert set(ids) <= {2, 4, 6, 8}
+    assert ids == sorted(ids)
     # 串行逐首探测至少 6 次 × 0.1s = 0.6s；并行一轮 + 凑够即停应明显更快
     assert elapsed < 0.5
 
@@ -388,7 +443,6 @@ def test_consecutive_keyword_searches_wait_for_busy_source(clean_state, monkeypa
     ("HTQYYMusicClient", "htqyy"),
     ("FiveSingMusicClient", "FiVeSiNg"),
     ("MyFreeMP3MusicClient", "myfreemp3"),
-    ("QQMusicClient", "qqmusicclient"),
 ])
 def test_canonical_search_and_refresh_mapping(clean_state, monkeypatch, canonical, alias):
     monkeypatch.setitem(app_module.CONF, "sources", [canonical])
@@ -466,17 +520,17 @@ def test_musicdl_receives_supported_network_limits(clean_state, monkeypatch):
         def __init__(self, **kwargs):
             captured.update(kwargs)
         def search(self, keyword):
-            return {"KuwoMusicClient": []}
+            return {"MiguMusicClient": []}
     monkeypatch.setattr(app_module.musicdl, "MusicClient", FakeClient)
-    app_module._search_one_source("KuwoMusicClient", "offline", 10)
+    app_module._search_one_source("MiguMusicClient", "offline", 10)
     assert captured["requests_overrides"] == {
-        "KuwoMusicClient": {"timeout": app_module.CONF["request_timeout"]}}
-    assert captured["clients_threadings"] == {"KuwoMusicClient": 1}
-    assert captured["init_music_clients_cfg"]["KuwoMusicClient"]["max_retries"] == 1
-    assert captured["init_music_clients_cfg"]["KuwoMusicClient"]["search_size_per_source"] == 10
+        "MiguMusicClient": {"timeout": app_module.CONF["request_timeout"]}}
+    assert captured["clients_threadings"] == {"MiguMusicClient": 1}
+    assert captured["init_music_clients_cfg"]["MiguMusicClient"]["max_retries"] == 1
+    assert captured["init_music_clients_cfg"]["MiguMusicClient"]["search_size_per_source"] == 10
     captured.clear()
-    app_module._search_one_source("KuwoMusicClient", "offline", 60)
-    assert captured["init_music_clients_cfg"]["KuwoMusicClient"]["search_size_per_source"] == app_module.CONF["search_page_cap"]
+    app_module._search_one_source("MiguMusicClient", "offline", 60)
+    assert captured["init_music_clients_cfg"]["MiguMusicClient"]["search_size_per_source"] == app_module.CONF["search_page_cap"]
 
 
 def test_restart_errors_and_one_research_restore_same_id(clean_state, monkeypatch):

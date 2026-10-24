@@ -41,23 +41,28 @@ try:
     from . import nmplaylists as nmpl
     from . import publicplaylists as pubpl
     from . import transcode as tc
+    from .roam import ROAM_SOURCES, RoamQueues, RoamError
     from .cache_gc import purge_rolling, sweep_orphan_lyrics
     from .env_merge import parse_env_file
     from .fnlog import diag as fn_diag
     from .fnlog import env_snapshot_lines, purge_stale, redact, setup_logging, write_env_snapshot
     from .version import get_version
+    from .quality_policy import read_channel_qualities
 except ImportError:  # uvicorn --app-dir proxy
     import recommend as dailyrec  # type: ignore
     import nmplaylists as nmpl  # type: ignore
     import publicplaylists as pubpl  # type: ignore
     import transcode as tc  # type: ignore
+    from roam import ROAM_SOURCES, RoamQueues, RoamError
     from cache_gc import purge_rolling, sweep_orphan_lyrics  # type: ignore
     from env_merge import parse_env_file  # type: ignore
     from fnlog import diag as fn_diag  # type: ignore
     from fnlog import env_snapshot_lines, purge_stale, redact, setup_logging, write_env_snapshot  # type: ignore
     from version import get_version  # type: ignore
+    from quality_policy import read_channel_qualities  # type: ignore
 
 logger = logging.getLogger("fnmusic_proxy")
+ROAM = RoamQueues()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 # httpx INFO 包含完整签名 URL；播放诊断仅记录歌曲、耗时和状态。
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -99,6 +104,7 @@ CONF = {
     "lx_url": os.environ.get("FNMUSIC_LX_URL", "http://127.0.0.1:8772"),
     "musicdl_enabled": os.environ.get("FNMUSIC_MUSICDL_ENABLED", "false").lower() in ("true", "1", "yes"),
     "netease_enabled": os.environ.get("FNMUSIC_NETEASE_ENABLED", "false").lower() in ("true", "1", "yes"),
+    "console_netease_enabled": os.environ.get("FNMUSIC_CONSOLE_NETEASE_ENABLED", "false").lower() in ("true", "1", "yes"),
     "lx_enabled": os.environ.get("FNMUSIC_LX_ENABLED", "false").lower() in ("true", "1", "yes"),
     "lx_search_limit": int(os.environ.get("FNMUSIC_LX_SEARCH_LIMIT", "20")),
     "lx_quality": os.environ.get("FNMUSIC_LX_QUALITY", "lossless"),
@@ -190,6 +196,9 @@ CONF = {
     # v2.0.0：音质模式 high|balanced|smooth（档序见 quality_order，只影响在线取源）；
     # 推荐双开关 / 封面补全 / .env 热重载默认开，均可被 .env 覆盖
     "quality_mode": (os.environ.get("FNMUSIC_QUALITY_MODE") or "high").strip().lower(),
+    "qq_quality": (os.environ.get("FNMUSIC_QQ_QUALITY") or "auto").strip().lower(),
+    "channel_qualities": read_channel_qualities(os.environ.get("FNMUSIC_CHANNEL_QUALITIES")),
+    "roam_source": (os.environ.get("FNMUSIC_ROAM_SOURCE") or "local").strip().lower(),
     # App 下载档（2.8.0）：app=跟随 App 显式请求，未知/缺省一律原文件（不擅自有损
     # 转码）；original=强制原文件；standard=强制 MP3 320k（官方"标准"档语义）
     "dl_quality": (os.environ.get("FNMUSIC_DL_QUALITY") or "app").strip().lower(),
@@ -518,6 +527,10 @@ _ENV_WATCH_KEYS: dict[str, tuple[str, str]] = {
     "FNMUSIC_SEARCH_DEEP_PAGE": ("search_deep_page", "bool"),
     "FNMUSIC_SEARCH_DEEP_MAX_PAGES": ("search_deep_max_pages", "deep_pages"),
     "FNMUSIC_QUALITY_MODE": ("quality_mode", "quality_mode"),
+    "FNMUSIC_QQ_QUALITY": ("qq_quality", "qq_quality"),
+    "FNMUSIC_CHANNEL_QUALITIES": ("channel_qualities", "channel_qualities"),
+    "FNMUSIC_CONSOLE_NETEASE_ENABLED": ("console_netease_enabled", "bool"),
+    "FNMUSIC_ROAM_SOURCE": ("roam_source", "roam_source"),
     "FNMUSIC_NETEASE_QUALITY": ("netease_quality", "netease_quality"),
     "FNMUSIC_DL_QUALITY": ("dl_quality", "dl_quality"),
     "FNMUSIC_TEE_SAVE_ENABLED": ("tee_save_enabled", "bool"),
@@ -574,6 +587,8 @@ def _env_watch_path() -> str:
 
 def _env_watch_parse(raw: str, kind: str):
     raw = str(raw or "").strip()
+    if kind == 'channel_qualities':
+        return read_channel_qualities(raw)
     if kind == "bool":
         return raw.lower() in ("true", "1", "yes")
     if kind == "cache_dir":
@@ -586,6 +601,10 @@ def _env_watch_parse(raw: str, kind: str):
             return None
     if kind == "quality_mode":
         return raw.lower() if raw.lower() in ("high", "balanced", "smooth") else None
+    if kind == "qq_quality":
+        return raw.lower() if raw.lower() in ("auto", "master", "lossless", "mp3_320", "mp3_128") else None
+    if kind == "roam_source":
+        return raw.lower() if raw.lower() in ('local', *ROAM_SOURCES) else None
     if kind == "dl_quality":
         return raw.lower() if raw.lower() in ("app", "original", "standard") else None
     if kind == "netease_quality":
@@ -683,7 +702,7 @@ def apply_env_hot_reload(env_path: "str | None" = None) -> list[str]:
             changed.append(conf_key)
     if "cache_dir" in changed:
         _migrate_media_refs(old_cache_dir or "", CONF["cache_dir"])
-    if set(changed) & {"quality_mode", "netease_quality"}:
+    if set(changed) & {"quality_mode", "netease_quality", "channel_qualities"}:
         _sync_netease_quality()
     return changed
 
@@ -781,10 +800,9 @@ def _netease_runtime_usable() -> bool:
     """网易盒子歌单/播放运行期链路可用性：当前音源是网易盒子，或网易云歌单常驻生效。
 
     只覆盖歌单注入与已登记网易曲目（播放/歌词/取链等）的放行口径；
-    搜索聚合（_aggregate_search/深分页/专辑搜索）仍只看 netease_enabled——
-    常驻模式下搜索结果不聚合网易（issue #38 需求 1）。
+    账号歌单常驻不自动参与搜索；管理台单独启用网易渠道时，搜索与其他音源并行。
     """
-    return bool(CONF.get("netease_enabled")) or bool(CONF.get("netease_playlist_resident"))
+    return bool((CONF.get("netease_enabled") or CONF.get("console_netease_enabled"))) or bool(CONF.get("netease_playlist_resident"))
 
 
 def _source_enabled(guid: str) -> bool:
@@ -1027,6 +1045,7 @@ def online_guid_from_item(item: dict) -> str:
 
 
 def song_id_from_online_guid(guid: str) -> str:
+    guid = _qq_base_guid(guid)
     if guid.startswith("online:"):
         return guid[len("online:") :]
     return guid
@@ -1039,6 +1058,69 @@ def is_online_guid(guid: str) -> bool:
 def source_from_online_guid(guid: str) -> str:
     parts = (guid or "").split(":")
     return parts[1] if len(parts) >= 3 else ""
+
+
+# Delivery identities are private to playback/storage, not new catalog tracks.
+# Keeping the preference in the URL and disk key prevents old FLAC/MP3 byte
+# offsets or a saved lower tier from being reused after changing preferences.
+_QQ_DELIVERY_RE = re.compile(r"^((?:online:qq:[A-Za-z0-9]{1,64}|online:kugou:[a-fA-F0-9]{32}(?::\d{1,20})?)):q-(high|balanced|smooth|master|lossless|mp3_320|mp3_128)$")
+_QQ_PLAY_PINS: dict[tuple[str, str], tuple[str, str, float]] = {}
+
+
+def _qq_base_guid(guid: str) -> str:
+    match = _QQ_DELIVERY_RE.fullmatch(guid)
+    return match[1] if match else guid
+
+
+def _qq_delivery_quality(guid: str) -> str:
+    match = _QQ_DELIVERY_RE.fullmatch(guid)
+    return match[2] if match else ""
+
+
+def _qq_delivery_guid(guid: str, *, standard: bool = False) -> str:
+    if source_from_online_guid(guid) not in ("qq", "kugou"):
+        return guid
+    if not standard and _qq_delivery_quality(guid):
+        return guid
+    if not re.fullmatch(r"online:(?:qq:[A-Za-z0-9]{1,64}|kugou:[a-fA-F0-9]{32}(?::\d{1,20})?)", _qq_base_guid(guid)):
+        return guid
+    channel = source_from_online_guid(guid)
+    quality = "mp3_320" if standard else str(CONF.get('channel_qualities', {}).get(channel, CONF.get('qq_quality') if channel == 'qq' else 'auto') or 'auto')
+    if quality == "auto":
+        quality = str(CONF.get("quality_mode") or "high")
+    if quality not in {"high", "balanced", "smooth", "master", "lossless", "mp3_320", "mp3_128"}:
+        quality = "high"
+    if channel == "kugou":
+        quality = {"high": "lossless", "master": "lossless", "balanced": "mp3_320", "smooth": "mp3_128"}.get(quality, quality)
+    return f"{_qq_base_guid(guid)}:q-{quality}"
+
+
+def _qq_playback_redirect(request: Request, guid: str, range_header: str | None) -> Response | None:
+    if source_from_online_guid(guid) not in ("qq", "kugou") or _qq_delivery_quality(guid):
+        return None
+    if not re.fullmatch(r"online:(?:qq:[A-Za-z0-9]{1,64}|kugou:[a-fA-F0-9]{32}(?::\d{1,20})?)", guid):
+        return JSONResponse(content={"code": 400, "msg": "无效的平台歌曲编号", "data": None}, status_code=400)
+    now = time.monotonic()
+    key = (_credential_scope(request), guid)
+    pinned = _QQ_PLAY_PINS.get(key)
+    # Offset requests without a qualified URL (some native players discard
+    # redirects) must retain the representation selected at the start.
+    continuation = bool(range_header and not re.match(r"^bytes=0-", range_header))
+    if continuation and pinned and now < pinned[2]:
+        target_guid, origin = pinned[:2]
+    else:
+        target_guid = _qq_delivery_guid(guid)
+        origin = "cache" if find_cache_file(target_guid) else "remote"
+    if len(_QQ_PLAY_PINS) >= 1024:
+        for expired in [k for k, v in _QQ_PLAY_PINS.items() if now >= v[2]]:
+            _QQ_PLAY_PINS.pop(expired, None)
+        if len(_QQ_PLAY_PINS) >= 1024:
+            _QQ_PLAY_PINS.pop(next(iter(_QQ_PLAY_PINS)))
+    _QQ_PLAY_PINS[key] = (target_guid, origin, now + 6 * 3600)
+    target = request.url.include_query_params(guid=target_guid, _qq_origin=origin)
+    # A real GUID embedded in the optional path must not override the query.
+    path = "/music/api/v1/track/stream"
+    return RedirectResponse(f"{path}?{target.query}", status_code=307, headers={"Cache-Control": "no-store"})
 
 
 # 搜索结果在线条目的来源标记（仅显示，不入库不影响业务逻辑）：
@@ -1247,6 +1329,70 @@ def strip_source_tag(title: str) -> str:
     return t
 
 
+_QQ_QUALITY_TITLE_SUFFIX = re.compile(
+    r"(?: \[QQ-(?:128k|320k|高音质|平衡|流畅|母带优先|无损优先)\])+$"
+)
+
+
+def clean_track_display_titles(obj):
+    """Hide our library filename quality suffix in track titles only.
+
+    File paths and delivery IDs still distinguish quality representations. Do
+    not rename files, rewrite the official database, or strip version labels.
+    """
+    if isinstance(obj, list):
+        return [clean_track_display_titles(value) for value in obj]
+    if isinstance(obj, dict):
+        out = {key: clean_track_display_titles(value) for key, value in obj.items()}
+        if isinstance(out.get("title"), str) and any(key in out for key in
+                ("audioSpec", "artist", "artists", "artistName", "duration", "duration_s")):
+            out["title"] = _QQ_QUALITY_TITLE_SUFFIX.sub("", out["title"])
+        return out
+    return obj
+
+
+def _qq_display_audio(item: dict, guid: str) -> dict:
+    """Project catalog sizes to this play preference without resolving media.
+
+    Keep all declared variants in snapshots so changing quality can rebuild old
+    playlists offline. These are catalog facts, not account-authorization claims.
+    A resolved rendition takes precedence over the requested/fallback ladder.
+    """
+    if source_from_online_guid(guid) != "qq":
+        return item
+    variants = item.get("audio_variants") or {}
+    if not isinstance(variants, dict):
+        variants = {}
+    ladders = {
+        "high": ("master", "lossless", "mp3_320", "mp3_128"),
+        "master": ("master", "lossless", "mp3_320", "mp3_128"),
+        "lossless": ("lossless", "mp3_320", "mp3_128"),
+        "balanced": ("lossless", "mp3_320", "mp3_128", "master"),
+        "smooth": ("mp3_128", "mp3_320", "lossless", "master"),
+        "mp3_320": ("mp3_320", "mp3_128"),
+        "mp3_128": ("mp3_128",),
+    }
+    preference = _qq_delivery_quality(_qq_delivery_guid(guid))
+    choices = ladders.get(preference, ladders["high"])
+    actual = str(item.get("audio_quality") or "")
+    selected = actual if actual in {"master", "lossless", "mp3_320", "mp3_128"} else ""
+    if not selected:
+        selected = next((q for q in choices if isinstance(variants.get(q), dict)
+                         and int(variants[q].get("file_size") or 0) > 0), "")
+    if not selected:
+        if preference not in {"mp3_128", "mp3_320", "smooth"}:
+            return item  # Legacy snapshots have no per-tier catalog information.
+        selected = "mp3_320" if preference == "mp3_320" else "mp3_128"
+    variant = variants.get(selected) or {}
+    size = max(0, int(variant.get("file_size") or 0))
+    # Never label a FLAC byte count as MP3. Unknown legacy sizes remain unknown.
+    if not size and actual and item.get("ext") == ("mp3" if selected.startswith("mp3_") else "flac"):
+        size = max(0, int(item.get("file_size") or 0))
+    return {**item, "ext": "mp3" if selected.startswith("mp3_") else "flac",
+            "file_size": size,
+            "bitrate": {"mp3_128": 128000, "mp3_320": 320000}.get(selected, 0)}
+
+
 def build_online_track(item: dict, mark_source: bool = False) -> dict:
     """对齐飞牛前端 ZQ 解构 / _h() 期望：artists、album 对象、genres 数组、audioSpec、duration 毫秒。
 
@@ -1254,6 +1400,7 @@ def build_online_track(item: dict, mark_source: bool = False) -> dict:
     收藏/历史/元数据等其余出口保持干净标题，业务逻辑一律不受标记影响。
     """
     guid = online_guid_from_item(item)
+    item = _qq_display_audio(item, guid)
     src = str(item.get("source") or source_from_online_guid(guid) or "")
     title = str(item.get("title") or item.get("name") or "")
     if item.get("needs_vip") is True and title and not title.startswith(_SOURCE_TAG_VIP):
@@ -1306,7 +1453,7 @@ def build_online_track(item: dict, mark_source: bool = False) -> dict:
         "channel": 2,
         "sampleRate": 44100,
         "bitDepth": 16 if play_format in ("wav", "flac", "aiff") else None,
-        "bitrate": 1411000 if play_format in ("flac", "wav", "ape", "wv") else 320000,
+        "bitrate": item.get("bitrate", 1411000 if play_format in ("flac", "wav", "ape", "wv") else 320000),
     }
     audio_spec = {k: v for k, v in audio_spec.items() if v is not None}
 
@@ -1344,6 +1491,8 @@ def build_online_track(item: dict, mark_source: bool = False) -> dict:
         "hasLyric": True,
         "genres": [],
         "accessStatus": 0,
+        **({"audioVariants": item["audio_variants"]}
+           if src == "qq" and item.get("audio_variants") else {}),
     }
 
 
@@ -1971,6 +2120,7 @@ def adopt_library_perms(path: str) -> None:
 
 
 def find_cache_file(guid: str) -> str | None:
+    guid = _qq_delivery_guid(guid)
     recalled = recalled_media_path(guid)
     if recalled:
         return recalled
@@ -1982,7 +2132,9 @@ def find_cache_file(guid: str) -> str | None:
             exact = os.path.join(d, f"{safe}.{ext}")
             if os.path.exists(exact) and os.path.getsize(exact) > 0:
                 return exact
-    return _find_file_by_snapshot_tags(guid)
+    # Tag matching says nothing about QQ quality. Only an exact delivery ref
+    # or filename is eligible; keep older files without quality records intact.
+    return None if _qq_delivery_quality(guid) else _find_file_by_snapshot_tags(guid)
 
 
 # 标签兜底查库的阴性缓存：确认不在曲库的 guid 短期内不再反复扫快照/查库
@@ -2068,6 +2220,11 @@ def library_media_path(guid: str, title: str, ext: str, artist: str = "", direct
         return dest
     os.makedirs(lib, exist_ok=True)
     basename = library_basename(title, artist, source_from_online_guid(guid) or "")
+    quality = _qq_delivery_quality(guid)
+    if quality:
+        label = {"high": "高音质", "balanced": "平衡", "smooth": "流畅", "master": "母带优先",
+                 "lossless": "无损优先", "mp3_320": "320k", "mp3_128": "128k"}[quality]
+        basename += f" [QQ-{label}]"
     if basename.lower() != "unknown":
         # issue #52 重复曲目：同曲（同"歌手 - 歌名"）跨 guid 二次落盘直接复用
         # 已有文件，聚合搜索多源条目/跨平台候选切换不再各存一份
@@ -2445,6 +2602,25 @@ async def forward_to_upstream(request: Request, client: httpx.AsyncClient) -> Re
             logger.info("upstream forward retry (%s %s): connection-level failure",
                         request.method, request.url.path)
     resp_headers = filter_headers(resp.headers, exclude_keys={"content-length", "content-encoding"})
+    # Native local lists/history use passthrough rather than the online JSON
+    # builder. Clean their display titles here too; media/Range stays streamed.
+    if (request.url.path.startswith("/music/api/") and request.method != "HEAD"
+            and resp.status_code == 200
+            and "application/json" in resp.headers.get("content-type", "").lower()):
+        try:
+            raw = await resp.aread()
+            try:
+                payload = resp.json()
+                cleaned = clean_track_display_titles(payload)
+            except (ValueError, UnicodeError):
+                return Response(content=raw, status_code=resp.status_code, headers=resp_headers)
+            if cleaned != payload:
+                for name in ("etag", "content-md5", "digest"):
+                    resp_headers.pop(name, None)
+                return JSONResponse(content=cleaned, status_code=resp.status_code, headers=resp_headers)
+            return Response(content=raw, status_code=resp.status_code, headers=resp_headers)
+        finally:
+            await resp.aclose()
     # 上游请求强制 accept-encoding: identity，其 Content-Length 即精确字节数；原样
     # 透传可让依赖总长度的播放内核走定长帧（对齐官方直连行为）。无 body 的状态
     # 码不能带；上游无视 identity 仍压缩时长度描述的是编码体，透传必错位，弃用。
@@ -2506,11 +2682,16 @@ async def fetch_upstream_envelope(request: Request, client: httpx.AsyncClient) -
             headers=resp_headers,
             media_type=resp.headers.get("content-type"),
         )
+    cleaned = clean_track_display_titles(payload)
+    if cleaned != payload:
+        for name in ("etag", "content-md5", "digest"):
+            resp_headers.pop(name, None)
+    payload = cleaned
     payload["_ext_headers"] = resp_headers
     return payload
 
 
-async def fetch_musicdl_search(client: httpx.AsyncClient, keyword: str, limit: int, sources: str | None = None) -> dict | None:
+async def fetch_musicdl_search(client: httpx.AsyncClient, keyword: str, limit: int, sources: str | None = None, *, page: int = 1) -> dict | None:
     if not keyword:
         return None
     scope = _FETCH_SCOPE.get()
@@ -2531,6 +2712,8 @@ async def fetch_musicdl_search(client: httpx.AsyncClient, keyword: str, limit: i
 
     async def _query():
         params: dict[str, Any] = {"keyword": keyword, "limit": limit}
+        if page > 1:
+            params["page"] = page
         selected_sources = CONF["online_sources"] if sources is None else sources
         if selected_sources:
             params["sources"] = selected_sources
@@ -2549,6 +2732,9 @@ async def fetch_musicdl_search(client: httpx.AsyncClient, keyword: str, limit: i
             logger.warning("musicdl search partial errors: %s", data.get("errors"))
         return data
 
+    # Explicit next pages bypass the first-page cancellation gate.
+    if page > 1:
+        return await _query()
     return await _MUSICDL_SEARCH_GATE.run(scope, keyword, _query)
 
 
@@ -2776,6 +2962,13 @@ def quality_order(ladder: "list[str] | tuple[str, ...]", mode: "str | None", pri
     return [seq[idx]] + list(reversed(seq[:idx]))
 
 
+def channel_quality_order(channel: str, ladder, primary: str):
+    preference = CONF.get('channel_qualities', {}).get(channel, 'auto')
+    if preference in ladder:
+        return quality_order(ladder, 'high', preference)
+    return quality_order(ladder, CONF.get('quality_mode'), primary)
+
+
 async def resolve_lx_url(client: httpx.AsyncClient, song_id: str, fresh: bool = False,
                          meta: "dict | None" = None) -> "dict | None":
     """洛雪音乐源直链解析：song_id 形如 "lx:kg:<hash>"。
@@ -2798,8 +2991,9 @@ async def resolve_lx_url(client: httpx.AsyncClient, song_id: str, fresh: bool = 
                 return dict(pin[0])
             _LX_URL_PIN.pop(key, None)
     primary = str(CONF.get("lx_quality") or "lossless").strip()
-    qualities = quality_order(_LX_QUALITY_LADDER, CONF.get("quality_mode"), primary)
-    if primary and primary not in qualities:
+    channel = ':'.join(key.split(':')[:2])
+    qualities = channel_quality_order(channel, _LX_QUALITY_LADDER, primary)
+    if primary and primary not in _LX_QUALITY_LADDER and primary not in qualities:
         qualities.insert(0, primary)
 
     extra: dict[str, str] = {}
@@ -3056,7 +3250,7 @@ def _netease_url_pin_store(song_id: str, url: str, ttl: float) -> None:
 
 def _sync_netease_quality() -> None:
     global _NETEASE_URL_CONFIG
-    config = (CONF.get("netease_quality"), CONF.get("quality_mode"))
+    config = (CONF.get("netease_quality"), CONF.get("quality_mode"), CONF.get('channel_qualities', {}).get('netease', 'auto'))
     if _NETEASE_URL_CONFIG != config:
         if _NETEASE_URL_CONFIG is not None:
             _cancel_netease_resolutions()
@@ -3157,11 +3351,12 @@ def _prefetch_netease(request: Request, guid: str) -> None:
 async def _resolve_netease_url_uncached(client: httpx.AsyncClient, song_id: str, fresh: bool) -> str | None:
     key = str(song_id)
     primary = str(CONF.get("netease_quality") or "lossless").strip()
-    qualities = quality_order(_NETEASE_QUALITY_LADDER, CONF.get("quality_mode"), primary)
-    if primary and primary not in qualities:
+    qualities = channel_quality_order('netease', _NETEASE_QUALITY_LADDER, primary)
+    if primary and primary not in _NETEASE_QUALITY_LADDER and primary not in qualities:
         qualities.insert(0, primary)
 
     mode = CONF.get("quality_mode")
+    preference = CONF.get('channel_qualities', {}).get('netease', 'auto')
     for q in qualities:
         started = time.monotonic()
         try:
@@ -3190,7 +3385,7 @@ async def _resolve_netease_url_uncached(client: httpx.AsyncClient, song_id: str,
                             url = str(url)
                             if not url.startswith(("http://", "https://")):
                                 return None
-                            if (str(CONF.get("netease_quality") or "lossless").strip(), CONF.get("quality_mode")) != (primary, mode):
+                            if (str(CONF.get("netease_quality") or "lossless").strip(), CONF.get("quality_mode"), CONF.get('channel_qualities', {}).get('netease', 'auto')) != (primary, mode, preference):
                                 return None
                             # TTL 以服务端 expi（秒）为准，预留 60s 网络余量；上限 30min，
                             # 无 expi 时保守 5min。失败重解析由调用方 refresh=True 触发。
@@ -3672,6 +3867,9 @@ def disguise_client_json(obj):
                     out[k] = fake_official_guid(v)
             else:
                 out[k] = disguise_client_json(v)
+        if isinstance(out.get("title"), str) and any(key in out for key in
+                ("audioSpec", "artist", "artists", "artistName", "duration", "duration_s")):
+            out["title"] = _QQ_QUALITY_TITLE_SUFFIX.sub("", out["title"])
         return out
     if isinstance(obj, list):
         return [disguise_client_json(x) for x in obj]
@@ -3912,6 +4110,7 @@ async def lifespan(fastapi_app: FastAPI):
     try:
         yield
     finally:
+        await ROAM.close()
         await pubpl.shutdown()
         netease_tasks = _cancel_netease_resolutions()
         netease_tasks = [task for task in netease_tasks if task.get_loop() is asyncio.get_running_loop()]
@@ -3958,6 +4157,49 @@ async def lifespan(fastapi_app: FastAPI):
 
 
 app = FastAPI(title="fnmusic-ext", lifespan=lifespan)
+
+
+@app.get("/music/api/v1/track/roam-start")
+@app.get("/music/api/v1/track/roam-next")
+@app.get("/music/api/v1/track/roam-previous")
+async def native_roam(request: Request):
+    platform = CONF.get('roam_source', 'local')
+    if platform == 'local':
+        return await forward_to_upstream(request, get_upstream_client(request.app))
+    error_headers = {"Cache-Control": "no-store"}
+    try:
+        device = request.query_params.get("deviceId", "")
+        relative = request.query_params.get("relativeRoamId", "")
+        action = request.url.path.rsplit("roam-", 1)[1]
+        if not device or len(device) > 128 or (action != "start" and not re.fullmatch(r"[0-9a-f]{32}", relative)):
+            raise RoamError("漫游请求参数无效，请重新点击漫游", 400)
+        authed, user, response = await _probe_upstream_auth(request, get_upstream_client(request.app))
+        if not authed:
+            return response or JSONResponse({"code": 401, "msg": "请先登录飞牛", "data": None}, status_code=401)
+        if not user or user == "shared":
+            raise RoamError("无法确认飞牛账号，请重新登录飞牛", 401)
+        provider = ROAM_SOURCES.get(platform)
+        if provider is None:
+            raise RoamError('漫游来源无效，请在播放与推荐中重新选择', 400)
+        enabled = (CONF.get('console_netease_enabled') or CONF.get('netease_enabled')) if platform == 'netease' else _source_enabled('online:' + platform + ':roam')
+        if not enabled:
+            raise RoamError(f'请先在音乐平台中启用{provider.name}', 409)
+        source = get_musicbox_client(request.app) if provider.engine == 'musicbox' else get_musicdl_client(request.app)
+        scope = await provider.scope(source)
+
+        async def fetch(cursor):
+            return await provider.fetch(source, cursor)
+
+        data = await ROAM.request((user, device), scope, action, relative, fetch, build_online_track,
+                                  owner=_credential_scope(request), platform=platform)
+        return JSONResponse(disguise_client_json({"code": 0, "msg": "success", "data": data}),
+                            headers=error_headers)
+    except RoamError as exc:
+        return JSONResponse({"code": exc.status, "msg": str(exc), "data": None},
+                            status_code=exc.status, headers=error_headers)
+    except (httpx.HTTPError, ValueError, TypeError, KeyError):
+        return JSONResponse({"code": 503, "msg": "推荐请求超时或暂时不可用，请稍后重试", "data": None},
+                            status_code=503, headers=error_headers)
 
 
 @app.middleware("http")
@@ -4205,7 +4447,7 @@ async def _aggregate_search(request: Request, keyword: str, entry: dict) -> None
         return
     token = _FETCH_SCOPE.set(scope)
     factories = []
-    if CONF.get("netease_enabled"):
+    if CONF.get("netease_enabled") or CONF.get("console_netease_enabled"):
         factories.append(lambda: fetch_musicbox_search(get_musicbox_client(request.app), keyword, CONF["netease_search_limit"]))
     if CONF.get("musicdl_enabled"):
         factories.append(lambda: fetch_musicdl_search(get_musicdl_client(request.app), keyword, CONF["online_limit"]))
@@ -4312,11 +4554,18 @@ def _online_window(entry: dict, page: int, size: int, local_total: int) -> list[
     return window
 
 
+def _qq_catalog_enabled() -> bool:
+    selected = {s.strip().casefold() for s in str(CONF.get("online_sources") or "").split(",")}
+    return bool(CONF.get("musicdl_enabled") and selected.intersection({"qq", "qqmusicclient"}))
+
+
 def _deep_sources_available(entry: dict) -> bool:
     """深分页是否还有可取的源：启用且未取尽，且未达 max_pages 封顶。"""
     if int(entry.get("deep_round") or 1) >= max(1, int(CONF.get("search_deep_max_pages") or 10)):
         return False
     exhausted = entry.get("exhausted") or set()
+    if _qq_catalog_enabled() and "qq" not in exhausted:
+        return True
     for name in ("netease", "lx"):
         if CONF.get(f"{name}_enabled") and name not in exhausted:
             return True
@@ -4327,8 +4576,8 @@ async def _extend_search(request: Request, keyword: str, entry: dict) -> None:
     """深分页增量取页：向未取尽的在线源取下一页并追加进在线池。
 
     只追加不重排（_online_window 的前缀稳定承诺）。取尽判定：某源本轮
-    返回空列表，或去重后对池 0 新增（上游开始重复自身）。musicdl 库无
-    分页参数，不参与深分页。绕过代理侧取消门——翻页是用户主动行为；
+    返回空列表，或去重后对池 0 新增（上游开始重复自身）。QQ 使用独立
+    资料接口翻页，其他 musicdl 源仍只取首屏。绕过代理侧取消门——翻页是用户主动行为；
     lx 请求仍带 scope 头，lx 服务端的同词取消门自然生效。
     """
     scope = entry.get("credentials") or _credential_scope(request)
@@ -4336,7 +4585,7 @@ async def _extend_search(request: Request, keyword: str, entry: dict) -> None:
     if _user_search_stale(entry, scope):
         return
     if round_no >= max(1, int(CONF.get("search_deep_max_pages") or 10)):
-        entry.setdefault("exhausted", set()).update({"netease", "lx"})
+        entry.setdefault("exhausted", set()).update({"netease", "lx", "qq"})
         return
     token = _FETCH_SCOPE.set(scope)
     try:
@@ -4345,7 +4594,12 @@ async def _extend_search(request: Request, keyword: str, entry: dict) -> None:
         cursors = entry.setdefault("deep_cursors", {})
         seen_ids = entry.setdefault("source_seen_ids", {})
 
-        if CONF.get("netease_enabled") and "netease" not in exhausted:
+        if _qq_catalog_enabled() and "qq" not in exhausted:
+            fetches.append(("qq", fetch_musicdl_search(
+                get_musicdl_client(request.app), keyword, CONF["online_limit"],
+                sources="QQMusicClient", page=cursors.get("qq", 1) + 1)))
+
+        if (CONF.get("netease_enabled") or CONF.get("console_netease_enabled")) and "netease" not in exhausted:
             limit = int(CONF["netease_search_limit"])
             n_cursor = cursors.get("netease", 1)
             fetches.append(("netease", _musicbox_search_request(
@@ -4361,6 +4615,8 @@ async def _extend_search(request: Request, keyword: str, entry: dict) -> None:
             return
         merged = list(entry["items"])
         for (name, _), result in zip(fetches, results):
+            if name == "qq" and isinstance(result, dict):
+                result = None if result.get("errors") else result.get("items", [])
             if isinstance(result, BaseException) or result is None:
                 # 瞬时失败不判取尽，下一轮重试当前游标
                 logger.warning("deep page fetch %s failed: %s", name, result)
@@ -4384,7 +4640,7 @@ async def _extend_search(request: Request, keyword: str, entry: dict) -> None:
             merged = deduplicate_online_items(merged + items)[:2000]
 
         if len(merged) >= 2000:
-            exhausted.update({"netease", "lx"})
+            exhausted.update({"netease", "lx", "qq"})
         entry["items"] = merged
         entry["deep_round"] = round_no + 1
         entry["accessed"] = time.time()
@@ -4630,6 +4886,7 @@ def _tee_metadata_fallback(
     推荐/网易账号歌单缓存 → 播放历史/收藏/自建歌单。
     缺哪个字段补哪个；已有的纯字符串专辑保持不变。封面 URL 只在调用方还没有时写入 dest_info。
     """
+    guid = _qq_base_guid(guid)
     title, artist, album = (title or "").strip(), (artist or "").strip(), (album or "").strip()
     need_cover = not _cover_url_of(dest_info)
     if not (title and artist and album and not need_cover):
@@ -5115,9 +5372,16 @@ def _credential_scope(request: Request) -> str:
 
 
 def _retained_track(request: Request, guid: str) -> tuple[dict | None, dict | None]:
+    guid = _qq_base_guid(guid)
+    # Bare internal Requests (e.g. lyric jobs) have no authentication context.
+    # They must not inherit a user's private roam metadata.
+    scope = _credential_scope(request) if request.scope.get("headers") else ""
+    roam_item = ROAM.retained(scope, guid) if scope else None
+    if roam_item:
+        return roam_item, None
     _clean_search_cache()
     for entry in reversed(list(_SEARCH_CACHE.values())):
-        if entry.get("credentials") != _credential_scope(request) or entry.get("config", _source_config()) != _source_config():
+        if not scope or entry.get("credentials") != scope or entry.get("config", _source_config()) != _source_config():
             continue
         for item in entry.get("items", []):
             if online_guid_from_item(item) == guid:
@@ -5234,9 +5498,11 @@ async def _open_online_stream(request: Request, guid: str, range_header: str | N
             client = get_musicdl_client(request.app)
             via_musicdl = True
             params = {"id": song_id_from_online_guid(guid), "proxy": "true"}
+            if source in ("qq", "kugou"):
+                params["quality"] = _qq_delivery_quality(_qq_delivery_guid(guid))
             # 无损档已被判定损坏的曲目（或上层明确要求）直接取 mp3 档；
             # 带断点续传的请求不切档——前后字节必须来自同一条流
-            if (force_mp3 or _lossless_is_blacklisted(guid)) and not range_header:
+            if source not in ("qq", "kugou") and (force_mp3 or _lossless_is_blacklisted(guid)) and not range_header:
                 params["quality"] = "mp3"
             req = client.build_request("GET", "/stream", params=params, headers=headers)
         try:
@@ -5279,8 +5545,12 @@ async def _open_online_stream(request: Request, guid: str, range_header: str | N
         # 仅 musicdl 通道会服务端透明降级（坏无损流→官方 mp3 档）：以实际
         # content-type 为准修正扩展名，避免 mp3 字节按 .flac 命名入库。
         # 网易/洛雪直链相反——上游会错报 audio/mpeg，扩展名以解析结果为准。
-        if via_musicdl and "audio/mpeg" in content_type and (not ext or ext in _LOSSLESS_EXTS):
-            ext = "mp3"
+        if via_musicdl:
+            actual_format = resp.headers.get("x-audio-format", "").lower()
+            if actual_format in {"flac", "mp3"}:
+                ext = actual_format
+            elif "audio/mpeg" in content_type and (not ext or ext in _LOSSLESS_EXTS):
+                ext = "mp3"
         result = (resp, owned, ext, info, chunks, first)
         resp = owned = None  # transfer ownership to response iterator
         return result
@@ -5347,6 +5617,7 @@ def _prune_full_fetch_state(now: float) -> None:
 
 def _register_background_fetch(request: Request, guid: str, gate_key: str) -> bool:
     """后台整轨下载通用注册逻辑，按 gate_key 指定的 CONF 键做门禁。"""
+    guid = _qq_delivery_guid(guid)
     if not CONF.get(gate_key) or find_cache_file(guid):
         return False
     if guid in _tee_active:
@@ -5432,6 +5703,7 @@ async def _full_fetch_download(guid: str, cred_headers: dict, force_mp3: bool = 
     quality=mp3），两次都坏才宣告失败——坏字节绝不入库。
     fresh_url：解析直链时旁路 lxmusic 成功缓存（续传回退/坏流重试等确认旧链
     不可信的路径使用，force_mp3 重试同样强制刷新）。"""
+    guid = _qq_delivery_guid(guid)
     part = None
     resp = None
     owned = None
@@ -5856,6 +6128,7 @@ async def _remove_plt_bound(playlist_guid: str, guid: str, user_guid: str) -> bo
 
 def _dispatch_official_binding(guid: str, headers: "dict | None", meta: "dict | None") -> None:
     """下载落库完成后调度官方绑定：逐用户去重起任务；无意图时零开销。"""
+    guid = _qq_base_guid(guid)
     if not CONF.get("fav_auto_bind"):
         return
     users = _bind_pending.get(guid)
@@ -6238,7 +6511,15 @@ async def stream_track(request: Request, subpath: str = ""):
     if not is_online_guid(guid):
         return await forward_to_upstream(request, get_upstream_client(request.app))
     range_header = request.headers.get("range")
-    cached = find_cache_file(guid)
+    redirect = _qq_playback_redirect(request, guid, range_header)
+    if redirect is not None:
+        return redirect
+    # A completed background save embeds tags/cover art and changes byte
+    # offsets. A remote playback must keep seeking against its remote bytes.
+    remote_qq = _qq_delivery_quality(guid) and request.query_params.get("_qq_origin") == "remote"
+    cached = None if remote_qq else find_cache_file(guid)
+    if _qq_delivery_quality(guid) and request.query_params.get("_qq_origin") == "cache" and not cached:
+        return JSONResponse(content={"code": 409, "msg": "缓存已清理，请重新播放", "data": None}, status_code=409)
     log_stream_probe(request.method, guid, range_header, bool(cached))
     if request.method == "HEAD":
         return await _stream_head_response(request, guid, cached, range_header)
@@ -6357,7 +6638,9 @@ async def _transcode_source(request: Request, guid: str) -> "tuple[str | None, d
                 return None, None
             return str(resolved["url"]), _lx_media_headers(resolved)
         url = f"{str(CONF['musicdl_url']).rstrip('/')}/stream?id={quote(song_id_from_online_guid(guid))}&proxy=true"
-        if _lossless_is_blacklisted(guid):
+        if source in ("qq", "kugou"):
+            url += "&quality=" + quote(_qq_delivery_quality(_qq_delivery_guid(guid)))
+        elif _lossless_is_blacklisted(guid):
             # issue #46 音质降级：无损流损坏拉黑后降级 mp3，留档实际交付格式
             fn_diag(logger, "lossless_downgrade", guid=guid, path="transcode_source", tier="mp3")
             url += "&quality=mp3"
@@ -6369,6 +6652,7 @@ async def _transcode_source(request: Request, guid: str) -> "tuple[str | None, d
 
 async def _start_transcode_session(request: Request, guid: str) -> "tc.Session | None":
     """启动/复用标准音质转码会话；不可用返回 None（调用方回落单分片桩）。"""
+    guid = _qq_delivery_guid(guid, standard=True)
     try:
         if source_from_online_guid(guid) == "netease":
             retained = _online_meta_for_request(request, guid)
@@ -6379,7 +6663,8 @@ async def _start_transcode_session(request: Request, guid: str) -> "tc.Session |
                 info, (src, headers) = await asyncio.gather(
                     _online_info(request, guid, include_lyric=False), _transcode_source(request, guid))
         else:
-            info = await _online_info(request, guid)
+            info = (await _online_info(request, guid, include_lyric=False) if source_from_online_guid(guid) == "qq"
+                    else await _online_info(request, guid))
             src, headers = await _transcode_source(request, guid)
         duration_s = float((info or {}).get("duration_s") or 0)
         if not src:
@@ -6400,6 +6685,7 @@ async def _start_transcode_session(request: Request, guid: str) -> "tc.Session |
 
 def _transcode_live(guid: str) -> "tc.Session | None":
     """取在跑或磁盘已完整的转码会话（不解析在线源）。"""
+    guid = _qq_delivery_guid(guid, standard=True)
     return tc.get_session(guid) or tc.peek_cached(guid, CONF["cache_dir"])
 
 
@@ -6432,6 +6718,7 @@ async def track_hls(request: Request, guid: str, filename: str = "preset.m3u8"):
     guid = resolve_real_guid(guid)
     if not is_online_guid(guid):
         return await forward_to_upstream(request, get_upstream_client(request.app))
+    guid = _qq_delivery_guid(guid, standard=True)
 
     if filename != "preset.m3u8" and not tc.valid_segment_name(filename):
         return JSONResponse(content={"code": 404, "msg": "not found", "data": None}, status_code=404)
@@ -6464,6 +6751,8 @@ async def track_transcode_session(request: Request):
     guid = await extract_guid_from_body(request)
     if not is_online_guid(guid):
         return await forward_to_upstream(request, get_upstream_client(request.app))
+    public_guid = guid
+    guid = _qq_delivery_guid(guid, standard=True)
     if request.url.path.endswith("/heartbeat"):
         tc.heartbeat(guid)
         try:
@@ -6473,7 +6762,7 @@ async def track_transcode_session(request: Request):
             pass
     else:
         await tc.quit_session(guid)
-    return JSONResponse(content={"code": 0, "msg": "ok", "data": {"guid": guid}})
+    return JSONResponse(content={"code": 0, "msg": "ok", "data": {"guid": public_guid}})
 
 
 @app.api_route("/music/api/v1/track/transcode", methods=["GET", "POST"])
@@ -6485,9 +6774,9 @@ async def track_transcode(request: Request):
         sess = _transcode_live(guid)
         if sess is None:
             sess = await _start_transcode_session(request, guid)
-        if sess is not None and sess.status in ("starting", "running") and not find_cache_file(guid):
+        if sess is not None and sess.status in ("starting", "running") and not find_cache_file(_qq_delivery_guid(guid, standard=True)):
             # 标准音质播放不经过 /track/stream，tee 永不触发；挂后台整轨下载保住边听边存
-            _register_full_fetch(request, guid)
+            _register_full_fetch(request, _qq_delivery_guid(guid, standard=True))
     return JSONResponse(
         content={
             "code": 0,
@@ -6673,6 +6962,7 @@ async def dl_transcode_prepare(request: Request):
             break
     is_original = str(body.get("isOriginal") or "").strip().lower() in ("true", "1")
     effective = _dl_effective_quality(quality, is_original)
+    guid = _qq_delivery_guid(guid, standard=effective == "standard")
     logger.info("[dl] prepare guid=%s q=%s -> %s", raw_guid or guid, (quality or "-")[:40], effective)
     quality = effective
     _dl_sweep()
@@ -6876,7 +7166,10 @@ async def _fetch_online_info(request: Request, guid: str, include_lyric: bool = 
     musicdl_client = get_musicdl_client(request.app)
     song_id = song_id_from_online_guid(guid)
     try:
-        r = await musicdl_client.get("/info", params={"id": song_id}, timeout=10.0)
+        params = {"id": song_id, "include_lyric": str(include_lyric).lower()}
+        if src in ("qq", "kugou"):
+            params["quality"] = _qq_delivery_quality(_qq_delivery_guid(guid))
+        r = await musicdl_client.get("/info", params=params, timeout=10.0)
         if r.status_code == 200:
             data = r.json()
             if isinstance(data, dict) and data.get("ok") is not False:
@@ -7003,14 +7296,14 @@ _COVER_CDN_TRANSPORT: "httpx.AsyncBaseTransport | None" = None
 async def _kw_cover_by_rid(rid: str) -> str:
     """酷我 artistpicserver 按 rid 取真图（接口返回文本，需解析出图片地址）。"""
     rid = str(rid or "").strip()
-    if not rid.isdigit():
+    if not re.fullmatch(r'\d{1,20}', rid):
         return ""
     cached = _cover_cache_get(f"kw:{rid}")
     if cached:
         return cached
     url = (
-        "https://artistpicserver.kuwo.cn/pic?corp=kuwo&type=rid_pic"
-        f"&pictype=500&size=500&rid={rid}"
+        "https://artistpicserver.kuwo.cn/pic.web?corp=kuwo&type=rid_pic"
+        f"&pictype=url&size=500&rid={rid}"
     )
     try:
         async with _cover_cdn_client() as client:
@@ -7024,6 +7317,11 @@ async def _kw_cover_by_rid(rid: str) -> str:
         if not m:
             return ""
         real = m.group(0)
+        parsed = httpx.URL(real)
+        if (not re.fullmatch(r'img[1-9]?\.(?:kwcdn\.)?kuwo\.cn', parsed.host)
+                or not parsed.path.startswith(('/star/', '/pic_music/'))):
+            return ''
+        real = str(parsed.copy_with(scheme='https', host=parsed.host.replace('.kwcdn.kuwo.cn', '.kuwo.cn')))
     except Exception as e:
         logger.debug("kw artistpic resolve failed for rid=%s: %s", rid, e)
         return ""
@@ -7495,6 +7793,8 @@ def _snapshot_to_info(track: dict) -> dict:
     重建时需映射回 artist/duration_s/ext；info 形状的历史快照字段已对齐则原样保留。
     """
     info = dict(track)
+    if isinstance(track.get("audioVariants"), dict):
+        info["audio_variants"] = track["audioVariants"]
     artists = track.get("artists")
     if not info.get("artist") and isinstance(artists, list) and artists and isinstance(artists[0], dict):
         info["artist"] = artists[0].get("name") or ""
@@ -7579,6 +7879,8 @@ def build_favorite_track_obj(
         "createdAt": ts,
         "updatedAt": ts,
     }
+    if vo.get("audioVariants"):
+        obj["audioVariants"] = vo["audioVariants"]
 
     if isinstance(template, dict) and template:
         # 以官方真实条目为结构底版，再用在线字段全覆盖：本侧未构造的官方字段

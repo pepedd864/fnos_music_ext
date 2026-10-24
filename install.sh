@@ -1159,15 +1159,23 @@ find "${SOURCES_DATA_DIR}" -type f -exec chmod 0600 {} + 2>/dev/null || true
 
 # 归一化服务源码权限：umask 077 环境检出的文件为 600，会导致镜像内 appuser 读不到 app.py
 chmod 0644 \
-    "${BASE_DIR}/musicdl-service/app.py" "${BASE_DIR}/musicdl-service/hardening.py" \
+    "${BASE_DIR}/musicdl-service/app.py" "${BASE_DIR}/musicdl-service/hardening.py" "${BASE_DIR}/musicdl-service/qq_auth.py" "${BASE_DIR}/musicdl-service/qq_catalog.py" "${BASE_DIR}/musicdl-service/kugou_catalog.py" "${BASE_DIR}/musicdl-service/kuwo_catalog.py" \
     "${BASE_DIR}/musicbox-service/app.py" "${BASE_DIR}/musicbox-service/runner.py" \
     "${BASE_DIR}/musicbox-service/netease_ext.py" \
     "${BASE_DIR}/musicbox-service/playback.py" \
     "${BASE_DIR}/lxmusic-service/app.py" "${BASE_DIR}/lxmusic-service/source_runtime.py" \
     "${BASE_DIR}/lxmusic-service/verify_source.py" "${BASE_DIR}/lxmusic-service/js/bridge.js" \
-    "${BASE_DIR}/webui-service/app.py" "${BASE_DIR}/webui-service/static/index.html" \
-    "${BASE_DIR}/webui-service/static/app.js" "${BASE_DIR}/webui-service/static/style.css" \
+    "${BASE_DIR}/webui-service/app.py" "${BASE_DIR}/webui-service/console_api.py" \
+    "${BASE_DIR}/webui-service/static/console.html" \
+    "${BASE_DIR}/webui-service/static/console/app.js" "${BASE_DIR}/webui-service/static/console/app.css" \
     2>/dev/null || true
+
+# The React console replaces the former management page, including upgraded installs.
+if [ -f "${BASE_DIR}/webui-service/static/console.html" ] && \
+   [ -f "${BASE_DIR}/webui-service/static/console/app.js" ]; then
+    rm -f "${BASE_DIR}/webui-service/static/index.html" \
+        "${BASE_DIR}/webui-service/static/app.js" "${BASE_DIR}/webui-service/static/style.css"
+fi
 
 MUSICDL_FLAG="false"
 MUSICBOX_FLAG="false"

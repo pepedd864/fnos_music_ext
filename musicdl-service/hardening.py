@@ -304,6 +304,9 @@ class SingleFlight:
 
         loop = asyncio.get_running_loop()
         fut = loop.create_future()
+        # The owner also raises the error. Consume an otherwise unobserved
+        # future exception when no follower joined this request.
+        fut.add_done_callback(lambda done: None if done.cancelled() else done.exception())
         self._inflight[key] = fut
         try:
             if callable(fn):

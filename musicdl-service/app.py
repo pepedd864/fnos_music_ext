@@ -33,7 +33,13 @@ except ImportError:
     logger.warning("curl_cffi not installed, falling back to standard httpx client")
 
 from musicdl import musicdl  # noqa: E402
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from hardening import AdaptiveTimeout, SearchCache, SourceBreaker, SingleFlight, SourceBulkhead, SourceBusy, SearchProgress  # noqa: E402
+from qq_auth import QQAuth, AuthError  # noqa: E402
+from qq_catalog import QQCatalog, CatalogError, validate_quality  # noqa: E402
+from kugou_catalog import KugouCatalog  # noqa: E402
+from kuwo_catalog import catalog as kuwo_catalog  # noqa: E402
+from pydantic import BaseModel, Field  # noqa: E402
 
 # 复用仓库根（容器内 /srv）的 proxy.env_merge 解析 .env；独立运行无仓库结构时退回纯环境变量
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -119,6 +125,24 @@ SINGLE_FLIGHT = SingleFlight()
 _SONG_CACHE: dict = {}
 _CACHE_LOCK = threading.Lock()
 _STATS = {"searches": 0, "errors": 0}
+_QQ_RESOLVED: dict = {}
+_QQ_RESOLVE_TASKS: dict = {}
+QQ_FLIGHT = SingleFlight()
+
+
+def _qq_auth_changed():
+    SEARCH_CACHE.clear()
+    _QQ_RESOLVED.clear()
+    with _CACHE_LOCK:
+        for key in list(_SONG_CACHE):
+            if key.startswith("qq:"):
+                _SONG_CACHE.pop(key, None)
+    SOURCE_BREAKER.record_success("QQMusicClient")
+
+
+QQ_AUTH = QQAuth(on_change=_qq_auth_changed)
+QQ_CATALOG = QQCatalog(QQ_AUTH)
+KUGOU = KugouCatalog()
 
 
 def _source_short(client_name: str) -> str:
@@ -200,6 +224,19 @@ def _cache_get(song_id: str):
 
 def _search_one_source(source: str, keyword: str, limit: int) -> list:
     """单个源搜索（工作线程内执行，阻塞）。"""
+    if source in ('KugouMusicClient', 'KuwoMusicClient'):
+        from types import SimpleNamespace
+        result = asyncio.run(KUGOU.search(keyword, limit=min(limit, 20)) if source == 'KugouMusicClient' else kuwo_catalog('search', keyword))
+        return [SimpleNamespace(source=source, identifier=item['id'].split(':', 1)[1], song_name=item['title'],
+                                singers=item['artist'], album=item['album'], duration_s=item['duration_s'],
+                                cover_url=item['cover_url'], resolve_on_play=True) for item in result['items'][:limit]]
+    auth_cfg = {}
+    if source == "QQMusicClient":
+        cookies = QQ_AUTH.cookies()
+        if cookies:
+            auth_cfg = {f"default_{phase}_cookies": dict(cookies)
+                        for phase in ("search", "parse", "download")}
+            auth_cfg["disable_print"] = True
     client = musicdl.MusicClient(
         music_sources=[source],
         init_music_clients_cfg={
@@ -209,6 +246,7 @@ def _search_one_source(source: str, keyword: str, limit: int) -> list:
                 "search_size_per_source": min(max(int(limit or 1), 1), int(CONF["search_page_cap"])),
                 "work_dir": CONF["work_dir"],
                 "max_retries": 1,
+                **auth_cfg,
             },
         },
         clients_threadings={source: 1},
@@ -234,6 +272,7 @@ def _normalize(song, keyword: str) -> dict:
         # qq 曲目的专辑封面主键：封面兜底链用 albummid 直构 gtimg 图床 URL
         "albummid": str(getattr(song, "albummid", "") or getattr(song, "album_mid", "") or ""),
         "download_url": getattr(song, "download_url", "") or "",
+        "resolve_on_play": bool(getattr(song, "resolve_on_play", False)),
     }
 
 
@@ -260,6 +299,8 @@ def _is_candidate_playable(song, item: dict) -> bool:
         return False
     if any(marker in title for marker in TRIAL_MARKERS):
         return False
+    if item.get('resolve_on_play'):
+        return True
     url = str(item.get("download_url") or "").strip()
     if not url or not url.startswith(("http://", "https://")):
         return False
@@ -356,6 +397,13 @@ def _search_playable(source: str, keyword: str, fetch_size: int, limit: int,
     valid = set()
     futures = {}
     for idx, (item, headers, _) in enumerate(candidates):
+        if item.get('resolve_on_play'):
+            valid.add(idx)
+            if progress is not None:
+                progress.append(candidates[idx])
+            if len(valid) >= limit:
+                break
+            continue
         futures[_PROBE_POOL.submit(_probe_playable_sync, item["download_url"], headers)] = idx
     try:
         wait_budget = None if deadline is None else max(0.1, deadline - time.monotonic())
@@ -379,6 +427,9 @@ def _search_playable(source: str, keyword: str, fetch_size: int, limit: int,
 
 async def _refresh_by_keyword(song_id: str) -> dict | None:
     """URL 过期或下载失败后按缓存的关键词重搜一次，找回同 ID 的曲目。"""
+    if song_id.startswith("qq:"):
+        return await _resolve_qq(song_id, force=True)
+    generation = QQ_AUTH.generation
     entry = _cache_get(song_id)
     if not entry or not entry.get("keyword"):
         return None
@@ -391,7 +442,10 @@ async def _refresh_by_keyword(song_id: str) -> dict | None:
             time.monotonic() + timeout, timeout=timeout,
         )
     except Exception as exc:
-        logger.warning("Refresh failed for %s: %s", song_id, exc)
+        logger.warning("Refresh failed for %s: %s", song_id,
+                       type(exc).__name__ if song_id.startswith("qq:") else exc)
+        return None
+    if generation != QQ_AUTH.generation:
         return None
     for item, headers, lyric in entries:
         _cache_put(item, entry["keyword"], headers, lyric)
@@ -535,8 +589,112 @@ async def _maybe_downgrade(id: str, entry: dict, url: str, quality: str,
     return url, src_headers
 
 
-async def _resolve_entry(song_id: str, auto_refresh: bool = True):
+async def _qq_metadata(song_id: str):
     entry = _cache_get(song_id)
+    if entry:
+        return entry
+    generation = QQ_AUTH.generation
+
+    async def recover():
+        try:
+            item = await QQ_CATALOG.info(song_id)
+        except CatalogError as exc:
+            raise HTTPException(exc.status, str(exc)) from None
+        if generation != QQ_AUTH.generation:
+            raise HTTPException(409, "QQ 登录状态已改变，请重试")
+        _cache_put(item, "", {}, "")
+        return _cache_get(song_id)
+    return await QQ_FLIGHT.run(("info", song_id, generation), recover)
+
+
+async def _resolve_qq(song_id: str, quality="", force=False):
+    try:
+        quality = validate_quality(quality)
+    except CatalogError as exc:
+        raise HTTPException(exc.status, str(exc)) from None
+    try:
+        QQ_AUTH.cookies()  # Detect expiry even while an audio URL is cached.
+    except AuthError as exc:
+        raise HTTPException(401, str(exc)) from None
+    generation = QQ_AUTH.generation
+    key = (song_id, quality, generation)
+
+    async def resolve():
+        # Check inside the single flight too: many Range requests may arrive
+        # together. Keep the selected format pinned when refreshing a URL.
+        cached = _QQ_RESOLVED.get(key)
+        if not force and cached and time.monotonic() < cached["deadline"]:
+            return cached["entry"]
+        try:
+            media = await QQ_CATALOG.resolve(song_id, quality, (cached or {}).get("rendition"))
+        except AuthError as exc:
+            raise HTTPException(401, str(exc)) from None
+        except CatalogError as exc:
+            raise HTTPException(exc.status, str(exc)) from None
+        if generation != QQ_AUTH.generation:
+            raise HTTPException(409, "QQ 登录状态已改变，请重新播放")
+        entry = _cache_get(song_id)
+        # The audio URL API works by MID even after a restart/metadata outage;
+        # playback must not wait for an independent metadata/lyrics request.
+        item = dict(entry["item"]) if entry else {"id": song_id, "source": "qq"}
+        item.update(download_url=media["download_url"], ext=media["ext"], file_size=0)
+        resolved = {**(entry or {}), "item": item, "ts": time.time(),
+                    "download_headers": {"Referer": "https://y.qq.com/"}}
+        if len(_QQ_RESOLVED) >= CONF["cache_max"]:
+            _QQ_RESOLVED.pop(next(iter(_QQ_RESOLVED)))
+        _QQ_RESOLVED[key] = {"entry": resolved, "rendition": media["rendition"],
+                             "deadline": time.monotonic() + min(media["ttl"], CONF["url_ttl"])}
+        return resolved
+    task = _QQ_RESOLVE_TASKS.get(key)
+    if task is None:
+        task = asyncio.create_task(resolve())
+        _QQ_RESOLVE_TASKS[key] = task
+        def finished(done):
+            if _QQ_RESOLVE_TASKS.get(key) is done:
+                _QQ_RESOLVE_TASKS.pop(key, None)
+            if not done.cancelled():
+                done.exception()
+        task.add_done_callback(finished)
+    # Closing the first browser request during a seek must not cancel the
+    # shared, independently bounded resolver that other requests are using.
+    return await asyncio.shield(task)
+
+
+async def _resolve_entry(song_id: str, auto_refresh: bool = True, quality: str = ""):
+    if song_id.startswith("qq:"):
+        return await _resolve_qq(song_id, quality)
+    if KUGOU.accepts(song_id):
+        if not quality and parse_env_file is not None:
+            from proxy.quality_policy import channel_preference
+            values = dict(parse_env_file(Path(os.environ.get('FNMUSIC_ENV_FILE', '/repo/.env')))[0])
+            preference = channel_preference(values, 'kugou')
+            quality = preference if preference != 'auto' else {'smooth': 'mp3_128', 'balanced': 'mp3_320', 'high': 'lossless'}.get(values.get('FNMUSIC_QUALITY_MODE'), 'mp3_128')
+        resolved = await KUGOU.resolve(song_id, 'mp3_128' if quality == 'mp3' else quality)
+        return {**resolved, 'item': {**((_cache_get(song_id) or {}).get('item') or {}), **resolved['item']}}
+    if re.fullmatch(r'netease:\d{1,20}', song_id):
+        level = {'': 'standard', 'mp3_128': 'standard', 'mp3_320': 'exhigh', 'lossless': 'lossless'}.get(quality)
+        if not level:
+            raise HTTPException(400, '不支持的网易云音质')
+        base = os.environ.get('MUSICDL_MUSICBOX_URL', 'http://127.0.0.1:8002').rstrip('/')
+        try:
+            async with httpx.AsyncClient(trust_env=False, timeout=35) as cx:
+                response = await cx.get(f'{base}/api/v1/song/{song_id.split(":")[1]}/url', params={'quality': level})
+                data = response.json().get('data') or {}
+        except (httpx.HTTPError, ValueError):
+            raise HTTPException(503, '网易云服务暂不可达，请检查平台是否启用') from None
+        url = data.get('url') or ''
+        if response.status_code != 200 or not url.startswith(('https://', 'http://')):
+            raise HTTPException(403, '当前网易云账号没有该歌曲或音质的完整播放权限')
+        return {'item': {'id': song_id, 'source': 'netease', 'download_url': url,
+                         'ext': data.get('type') or ('flac' if level == 'lossless' else 'mp3')},
+                'download_headers': {}, 'ts': time.time(), 'keyword': ''}
+    entry = _cache_get(song_id)
+    if entry and entry['item'].get('resolve_on_play') and re.fullmatch(r'kuwo:\d{1,20}', song_id):
+        resolved = await asyncio.to_thread(_kuwo_force_mp3_url_sync, song_id)
+        if not resolved:
+            raise HTTPException(403, '酷我未返回当前歌曲的可用音频，请选择其他歌曲或平台')
+        url, headers = resolved
+        return {**entry, 'item': {**entry['item'], 'download_url': url, 'ext': 'mp3'}, 'download_headers': headers}
     if entry is None:
         raise HTTPException(404, f"unknown song id {song_id!r}: cache expired or service restarted; re-search keyword and source once, then retry")
     fresh = entry["item"].get("download_url") and (time.time() - entry["ts"]) < CONF["url_ttl"]
@@ -623,11 +781,90 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        for task in list(_QQ_RESOLVE_TASKS.values()):
+            task.cancel()
+        await asyncio.gather(*list(_QQ_RESOLVE_TASKS.values()), return_exceptions=True)
+        await QQ_AUTH.close()
         await app.state.http.aclose()
         SOURCE_WORKERS.shutdown(wait=False)
 
 
 app = FastAPI(title="musicdl-service", lifespan=lifespan)
+
+
+@app.api_route('/auth/kugou/{operation:path}', methods=['GET', 'POST'])
+async def kugou_auth(operation: str, request: Request):
+    methods = {'status': 'GET', 'login': 'POST', 'login/check': 'POST', 'verify': 'POST', 'logout': 'POST'}
+    if methods.get(operation) != request.method:
+        raise HTTPException(404, '未知账号操作')
+    if operation == 'status':
+        result = KUGOU.status()
+    elif operation == 'login/check':
+        if len(await request.body()) > 1024:
+            raise HTTPException(413, '请求过大')
+        result = await KUGOU.check((await request.json()).get('session_id'))
+    else:
+        result = await getattr(KUGOU, operation)()
+    return JSONResponse(result, headers={'Cache-Control': 'no-store'})
+
+
+@app.get('/catalog/{platform}/{operation}')
+async def platform_catalog(platform: str, operation: str, q: str = '', page: int = Query(1, ge=1, le=100), cursor: int = Query(0, ge=0, le=1000)):
+    if platform not in ('kugou', 'kuwo') or operation not in ('search', 'recommend', 'session'):
+        raise HTTPException(404, '未知目录接口')
+    if operation == 'session':
+        scope = KUGOU.recommendation_scope() if platform == 'kugou' else 'kuwo:public'
+        return JSONResponse({'ok': True, 'scope': scope}, headers={'Cache-Control': 'no-store'})
+    if operation == 'search' and not 1 <= len(q.strip()) <= 200:
+        raise HTTPException(400, '请输入 1 至 200 字的搜索词')
+    if platform == 'kugou':
+        result = await (KUGOU.search(q.strip(), page) if operation == 'search' else KUGOU.recommend(cursor))
+    else:
+        result = await kuwo_catalog(operation, q.strip(), page if operation == 'search' else cursor + 1)
+        if operation == 'recommend':
+            result['scope'] = 'kuwo:public'
+    for item in result['items']:
+        _cache_put(item, f"{item['title']} {item['artist']}", {}, '')
+    return JSONResponse(result, headers={'Cache-Control': 'no-store'})
+
+
+class QQLoginRequest(BaseModel):
+    kind: str = "qq"
+
+
+class QQCheckRequest(BaseModel):
+    session_id: str = Field(min_length=1, max_length=128)
+
+
+@app.exception_handler(AuthError)
+async def qq_auth_error(request: Request, exc: AuthError):
+    return JSONResponse({"detail": str(exc)}, status_code=502,
+                        headers={"Cache-Control": "no-store"})
+
+
+@app.get("/auth/qq/status")
+async def qq_status():
+    return JSONResponse(QQ_AUTH.status(), headers={"Cache-Control": "no-store"})
+
+
+@app.post("/auth/qq/login")
+async def qq_login(body: QQLoginRequest):
+    return JSONResponse(await QQ_AUTH.start(body.kind), headers={"Cache-Control": "no-store"})
+
+
+@app.post("/auth/qq/login/check")
+async def qq_login_check(body: QQCheckRequest):
+    return JSONResponse(await QQ_AUTH.check(body.session_id), headers={"Cache-Control": "no-store"})
+
+
+@app.post("/auth/qq/verify")
+async def qq_verify():
+    return JSONResponse(await QQ_AUTH.verify(), headers={"Cache-Control": "no-store"})
+
+
+@app.post("/auth/qq/logout")
+async def qq_logout():
+    return JSONResponse(await QQ_AUTH.logout(), headers={"Cache-Control": "no-store"})
 
 
 @app.get("/healthz")
@@ -641,6 +878,35 @@ async def healthz():
         "adaptive_timeouts": ADAPTIVE.stats(),
         "stats": _STATS,
     }
+
+
+def _qq_recommend_scope():
+    if not QQ_AUTH.status()["logged_in"]:
+        raise HTTPException(401, "QQ 登录已过期，请在扩展管理页刷新或重新扫码")
+    # An opaque account epoch invalidates queues on logout, refresh or account switch.
+    import hashlib
+    return hashlib.sha256(json.dumps(QQ_AUTH.cookies(), sort_keys=True).encode()).hexdigest()
+
+
+@app.get("/recommend/qq/session")
+async def qq_recommend_session():
+    return JSONResponse({"ok": True, "scope": _qq_recommend_scope()},
+                        headers={"Cache-Control": "no-store"})
+
+
+@app.get("/recommend/qq")
+async def qq_recommend(cursor: int = Query(0, ge=0, le=1000)):
+    scope = _qq_recommend_scope()
+    try:
+        batch = await QQ_CATALOG.recommend(cursor)
+    except CatalogError as exc:
+        raise HTTPException(exc.status, str(exc)) from None
+    if scope != _qq_recommend_scope():
+        raise HTTPException(409, "QQ 登录已改变，请重新开始漫游")
+    for item in batch["items"]:
+        _cache_put(item, "", {}, "")
+    return JSONResponse({"ok": True, "scope": scope, **batch},
+                        headers={"Cache-Control": "no-store"})
 
 
 @app.get("/sources")
@@ -670,7 +936,10 @@ async def search(
     keyword: str = Query(..., min_length=1),
     limit: int = Query(None, ge=1, le=30),
     sources: str = Query("", description="逗号分隔的源名(短名或全名)，空=用默认白名单"),
+    page: int = 1,
 ):
+    if not isinstance(page, int) or page < 1 or page > 100:
+        raise HTTPException(400, "page must be between 1 and 100")
     if limit is None:
         limit = CONF["limit_per_source"]
 
@@ -679,7 +948,12 @@ async def search(
         raw_src_list = [_source_client(s) for s in sources.split(",") if s.strip()]
     raw_src_list = list(dict.fromkeys(raw_src_list))
     sources_key = ",".join(sorted(raw_src_list))
-    cache_key = f"{sources_key}|limit={limit}"
+    if page > 1:
+        raw_src_list = [s for s in raw_src_list if s == "QQMusicClient"]
+    cache_key = f"{sources_key}|limit={limit}|page={page}"
+    auth_generation = QQ_AUTH.generation
+    if "QQMusicClient" in raw_src_list:
+        cache_key += f"|qq_auth={auth_generation}"
     _STATS["searches"] += 1
 
     async def _do_search() -> dict:
@@ -713,7 +987,10 @@ async def search(
         def collect(source):
             progress = progress_by_source.get(source)
             items = []
-            for item, headers, lyric in progress.finish() if progress else []:
+            entries = progress.finish() if progress else []
+            if source == "QQMusicClient" and auth_generation != QQ_AUTH.generation:
+                return []
+            for item, headers, lyric in entries:
                 _cache_put(item, keyword, headers, lyric)
                 items.append(item)
             return items
@@ -725,6 +1002,17 @@ async def search(
             progress_by_source[source] = progress
             fetch_size = max(limit * 2, 10)
             try:
+                if source == "QQMusicClient":
+                    # No musicdl.search(): it resolves/probes every song before
+                    # handing back even the first metadata row.
+                    items = await QQ_CATALOG.search(keyword, limit, page)
+                    if auth_generation != QQ_AUTH.generation:
+                        return source, [], "QQ 登录状态已改变，请重新搜索"
+                    for item in items:
+                        previous = _cache_get(item["id"])
+                        _cache_put(item, keyword, {}, (previous or {}).get("lyric", ""))
+                    SOURCE_BREAKER.record_success(source)
+                    return source, items, None
                 await SOURCE_WORKERS.run(
                     source, _search_playable, source, keyword, fetch_size, limit,
                     None, started + timeout - min(0.1, timeout * 0.1), progress,
@@ -759,6 +1047,8 @@ async def search(
             except Exception as e:  # 单源失败不影响其他源
                 _STATS["errors"] += 1
                 SOURCE_BREAKER.record_failure(source)
+                if source == "QQMusicClient":
+                    return source, collect(source), (str(e) if isinstance(e, (AuthError, CatalogError)) else "QQ 音源请求失败，请检查网络或验证账号")
                 return source, collect(source), f"{type(e).__name__}: {e}"
 
         results: list = []
@@ -812,6 +1102,10 @@ async def search(
                     all_items.append(item)
 
         errors = {src: err for src, _, err in results if err}
+        if "QQMusicClient" in raw_src_list and auth_generation != QQ_AUTH.generation:
+            # A login/logout during a search must not repopulate old URLs.
+            all_items = [item for item in all_items if not item["id"].startswith("qq:")]
+            errors["QQMusicClient"] = "QQ 登录状态已改变，请重新搜索"
         for s in raw_src_list:
             if s not in active_src_list:
                 errors.setdefault(s, "circuit breaker open")
@@ -835,11 +1129,38 @@ async def search(
 
 
 @app.get("/info")
-async def info(id: str = Query(..., min_length=1)):
+async def info(id: str = Query(..., min_length=1), include_lyric: bool = True, quality: str = ""):
+    generation = QQ_AUTH.generation
     entry = _cache_get(id)
+    if id.startswith("qq:"):
+        entry = entry or await _qq_metadata(id)
+        if include_lyric and not entry.get("lyric"):
+            async def lyric():
+                try:
+                    text = await QQ_CATALOG.lyric(id)
+                    if generation == QQ_AUTH.generation and _cache_get(id) is entry:
+                        entry["lyric"] = text
+                except (CatalogError, AuthError):
+                    pass  # Optional lyrics never make metadata/playback fail.
+            await QQ_FLIGHT.run(("lyric", id, generation), lyric)
+        if generation != QQ_AUTH.generation:
+            raise HTTPException(409, "QQ 登录状态已改变，请重试")
     if entry is None:
         raise HTTPException(404, f"song id {id!r} not found in cache: cache expired or service restarted; re-search keyword and source once, then retry")
     item = entry["item"]
+    audio_quality = ""
+    if id.startswith("qq:"):
+        try:
+            quality = validate_quality(quality)
+        except CatalogError as exc:
+            raise HTTPException(exc.status, str(exc)) from None
+        resolved = _QQ_RESOLVED.get((id, quality, generation))
+        if resolved:
+            item = {**item, "ext": resolved["entry"]["item"]["ext"], "file_size": 0}
+            audio_quality = {"AI00": "master", "F000": "lossless", "M800": "mp3_320",
+                             "M500": "mp3_128"}.get(resolved["rendition"], "")
+        elif quality in ("mp3", "mp3_320", "mp3_128"):
+            item = {**item, "ext": "mp3", "file_size": 0}
     return {
         "ok": True,
         "id": item.get("id"),
@@ -852,6 +1173,8 @@ async def info(id: str = Query(..., min_length=1)):
         "file_size": item.get("file_size"),
         "cover_url": item.get("cover_url"),
         "lyric": entry.get("lyric", ""),
+        **({"audio_quality": audio_quality, "audio_variants": item.get("audio_variants") or {}}
+           if id.startswith("qq:") else {}),
     }
 
 
@@ -859,14 +1182,28 @@ async def info(id: str = Query(..., min_length=1)):
 async def stream(
     id: str = Query(...),
     proxy: bool = Query(False, description="true=字节流透传而非302"),
-    quality: str = Query("", description="mp3=跳过无损档直接取有损直链（上游无损流损坏时上层降级用）"),
+    quality: str = Query("", description="QQ: high/balanced/smooth/master/lossless/mp3_320/mp3_128；mp3 为兼容降级档"),
     range_header: str | None = Header(None, alias="Range", description="客户端请求头中的 Range"),
 ):
-    entry = await _resolve_entry(id)
+    entry = await _resolve_entry(id, quality=quality)
     url = entry["item"].get("download_url")
     if not url:
         raise HTTPException(502, f"no playable url for {id}")
-    url, src_headers = await _maybe_downgrade(id, entry, url, quality, range_header)
+    async def prepare(entry, url):
+        if id.startswith(("qq:", "netease:")) or KUGOU.accepts(id):
+            # Authorized ordinary QQ formats do not need the Kuwo corruption
+            # workaround's 3 MiB download + ffmpeg probe before each first play.
+            return url, {**entry.get("download_headers", {}), **({"Range": range_header} if range_header else {})}
+        return await _maybe_downgrade(id, entry, url, quality, range_header)
+    url, src_headers = await prepare(entry, url)
+
+    async def refresh():
+        if id.startswith('netease:') or KUGOU.accepts(id):
+            if KUGOU.accepts(id):
+                KUGOU.resolved.pop((id, quality or 'mp3_128', KUGOU.generation), None)
+            return await _resolve_entry(id, quality=quality)
+        return (await _resolve_qq(id, quality, force=True) if id.startswith("qq:")
+                else await _refresh_by_keyword(id))
     if not proxy:
         return RedirectResponse(url, status_code=302)
 
@@ -875,26 +1212,27 @@ async def stream(
     except HTTPException:
         raise
     except Exception as e:
-        logger.warning("Stream request failed for %s (%s), attempting refresh: %s", id, url, e)
-        refreshed_entry = await _refresh_by_keyword(id)
+        logger.warning("Stream request failed for %s, attempting refresh: %s", id, type(e).__name__)
+        refreshed_entry = await refresh()
         if refreshed_entry and refreshed_entry["item"].get("download_url"):
             entry = refreshed_entry
             url = entry["item"]["download_url"]
-            url, src_headers = await _maybe_downgrade(id, entry, url, quality, range_header)
+            url, src_headers = await prepare(entry, url)
             resp = await _fetch_upstream_stream(url, src_headers)
         else:
-            raise HTTPException(502, f"failed to fetch stream from source for {id}: {e}")
+            raise HTTPException(502, f"failed to fetch stream from source for {id}")
 
     # 若源站返回 4xx/5xx，尝试刷新一次
     if resp.status_code >= 400:
         if hasattr(resp, "close"):
             resp.close()
         logger.warning("Source returned %s for %s, attempting refresh...", resp.status_code, id)
-        refreshed_entry = await _refresh_by_keyword(id)
-        if refreshed_entry and refreshed_entry["item"].get("download_url") and refreshed_entry["item"]["download_url"] != url:
+        refreshed_entry = await refresh()
+        if (refreshed_entry and refreshed_entry["item"].get("download_url")
+                and (id.startswith("qq:") or refreshed_entry["item"]["download_url"] != url)):
             entry = refreshed_entry
             url = entry["item"]["download_url"]
-            url, src_headers = await _maybe_downgrade(id, entry, url, quality, range_header)
+            url, src_headers = await prepare(entry, url)
             resp = await _fetch_upstream_stream(url, src_headers)
             if resp.status_code >= 400:
                 status = resp.status_code
@@ -905,6 +1243,8 @@ async def stream(
             raise HTTPException(502, f"source returned {resp.status_code} for {id}")
 
     out_headers = {"Accept-Ranges": "bytes", "Cache-Control": "no-store"}
+    if id.startswith("qq:"):
+        out_headers["X-Audio-Format"] = entry["item"]["ext"]
     for k in ("Content-Type", "Content-Length", "Content-Range"):
         val = resp.headers.get(k) or resp.headers.get(k.lower())
         if val:

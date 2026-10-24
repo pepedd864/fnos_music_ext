@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import logging
 import threading
 import time
@@ -170,6 +171,17 @@ def check_is_logged_in() -> bool:
     with _login_state_lock:
         _login_state = (logged, time.monotonic())
     return logged
+
+
+def recommendation_scope() -> str:
+    """Opaque account fingerprint; never return cookies or resolve song audio."""
+    with _api_lock:
+        api = _get_api_locked()
+        cookies = sorted((c.domain, c.path, c.name, c.value) for c in api.session.cookies
+                         if c.name in ('MUSIC_U', '__csrf'))
+    if not cookies:
+        raise ValueError('No account cookies')
+    return hashlib.sha256(json.dumps(cookies).encode()).hexdigest()
 
 
 def filter_playable_song_ids(ids: list[int]) -> set[int]:
@@ -350,7 +362,7 @@ def search_web_fallback(keyword: str, stype: str = "song", limit: int = 20, offs
     res = None
     try:
         if httpx is not None:
-            with httpx.Client(timeout=10.0) as client:
+            with httpx.Client(timeout=10.0, trust_env=False) as client:
                 resp = client.post(url, headers=headers, data=data)
                 resp.raise_for_status()
                 res = resp.json()

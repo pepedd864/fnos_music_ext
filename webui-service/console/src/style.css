@@ -1,0 +1,110 @@
+html, body, #app, #app > .ant-app { height: 100%; min-height: 0; }
+body { margin: 0; overflow: hidden; background: #f5f5f5; }
+.app-layout { height: 100vh; height: 100dvh; min-height: 0; overflow: hidden; }
+.main-layout { min-width: 0; min-height: 0; }
+.brand { height: 64px; display: flex; align-items: center; padding: 0 22px; flex-shrink: 0; white-space: nowrap; }
+.sidebar { border-right: 1px solid #f0f0f0; }
+.sidebar .ant-layout-sider-children { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.sidebar-nav { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; overscroll-behavior: contain; }
+.sidebar .ant-menu { border-inline-end: 0 !important; padding: 6px 8px; }
+.app-header { background: #fff; padding: 0 28px; border-bottom: 1px solid #f0f0f0; height: 64px; flex-shrink: 0; }
+.page-inner { min-height: 100%; padding: 30px 32px 24px; width: 100%; }
+.page-content { min-height: 0; padding: 0; overflow: auto; overscroll-behavior: contain; scrollbar-gutter: stable; }
+.page-content:focus-visible { outline: 2px solid #1677ff; outline-offset: -2px; }
+.page-heading { margin-bottom: 26px; }
+.page-heading h2 { margin: 0 0 8px; }
+.metrics { margin-bottom: 24px; }
+.metrics .ant-statistic-content { margin: 8px 0; }
+.metrics .ant-statistic-content-prefix { color: #8c8c8c; font-size: 18px; margin-right: 12px; }
+.library-toolbar { margin-bottom: 16px; }
+.library-toolbar .ant-tabs-nav { margin: 0; }
+.song-search { width: 270px; }
+.library-table { border: 1px solid #f0f0f0; border-radius: 8px; overflow: clip; }
+.library-table .ant-table-cell { padding-top: 20px !important; padding-bottom: 20px !important; }
+.song-name { max-width: 245px; min-width: 0; }
+.title-button { padding: 0; height: auto; white-space: normal; text-align: left; font-weight: 500; color: #262626; }
+.subline { display: block; margin-top: 5px; font-size: 13px; line-height: 1.6; }
+.library-footer { position: sticky; bottom: 0; z-index: 4; margin-top: 16px; padding: 16px 0; background: #f5f5f5; border-top: 1px solid #e8e8e8; }
+.file-card .ant-card-body { padding: 16px; }
+.preferred-file { border-color: #91caff; background: #f0f7ff; }
+.file-meta { font-size: 13px; margin: 16px 0; }
+.file-card .ant-badge-status-text { font-size: 13px; color: #59636f; }
+@media (max-width: 1100px) {
+  .page-inner { padding: 24px 20px; }
+  .song-search { width: 240px; }
+}
+@media (max-width: 760px) {
+  .page-inner { padding: 22px 14px 24px; }
+  .app-header { padding: 0 12px; }
+  .app-header .ant-breadcrumb { display: none; }
+  .library-toolbar .ant-tabs, .song-search { width: 100%; }
+}
+.file-path { font-size: 13px; overflow-wrap: anywhere; margin-bottom: 16px; }
+.audio-player { flex-shrink: 0; margin: 0; border-radius: 0; border-width: 1px 0 0; box-shadow: 0 -4px 20px #00000008; }
+.playing-title { flex: 1; min-width: 120px; max-width: 440px; }
+.audio-player audio { max-width: 100%; height: 36px; }
+@media (max-height: 700px) {
+  .metrics .ant-card-body { padding: 14px 18px; }
+  .metrics .ant-statistic-content { margin: 4px 0; }
+  .page-heading { margin-bottom: 20px; }
+}
+
+.settings-stack { width: 100%; max-width: 1200px; }
+.settings-save { flex-shrink: 0; padding: 16px 32px; background: #fff; border-top: 1px solid #f0f0f0; box-shadow: 0 -4px 16px #00000005; }
+.diagnostic-text { white-space: pre-wrap; overflow-wrap: anywhere; margin-top: 16px; }
+.public-browser { padding-top: 20px; border-top: 1px solid #f0f0f0; }
+.settings-stack .ant-list-item-meta { min-width: 0; }
+.settings-stack .ant-list-item-meta-title { overflow-wrap: anywhere; }
+@media (max-width: 760px) {
+  .settings-save { padding: 12px 14px; }
+  .settings-stack .ant-list-item { flex-wrap: wrap; gap: 12px; }
+  .settings-stack .ant-list-item-action { margin-inline-start: 0; }
+}
+
+.library-table .ant-table-row { cursor: pointer; }
+.library-table .ant-table-row:focus-visible { outline: 2px solid #1677ff; outline-offset: -2px; }
+.channel-quality-select { width: 235px; flex-shrink: 0; }
+@media (max-width: 760px) {
+  .channel-quality-select { width: 100%; }
+}
+
+.discovery-platform { width: 180px; }
+.discovery-search { width: 440px; max-width: 100%; }
+.discovery-results .ant-card-head-title { white-space: normal; overflow-wrap: anywhere; padding: 16px 0; }
+.discovery-results .ant-list-item-meta { min-width: 0; }
+.discovery-results .ant-list-item-meta-title { overflow-wrap: anywhere; }
+.discovery-pagination { gap: 12px; padding-top: 16px; border-top: 1px solid #f0f0f0; }
+@media (max-width: 760px) {
+  .discovery-search { width: 100%; }
+  .discovery-results .ant-list-item { flex-wrap: wrap; gap: 12px; }
+  .discovery-results .ant-list-item-action { margin-inline-start: 0; }
+}
+
+.platform-page { width: 100%; max-width: 1160px; }
+.platform-toolbar { margin-bottom: 20px; }
+.platform-search { width: 190px; }
+.platform-default-quality { display: flex; align-items: center; gap: 12px; padding-bottom: 2px; white-space: nowrap; }
+.platform-default-quality .ant-select { width: 174px; }
+.platform-table { border: 1px solid #e8e8e8; border-radius: 8px; overflow: hidden; background: #fff; }
+.platform-table .ant-table-cell { padding: 18px 24px !important; }
+.platform-table .ant-table-thead .ant-table-cell { color: #687483; font-size: 13px; font-weight: 500; }
+.platform-row-action { padding-inline: 0; height: auto; }
+.platform-draft-note, .platform-page > .ant-alert { margin-bottom: 20px; }
+.platform-connection-panels { background: #fff; border-color: #e8e8e8; }
+.platform-connection-panels .ant-collapse-header { padding: 18px 20px !important; }
+.platform-connection-panels .ant-collapse-body { padding: 8px 20px 24px !important; }
+.platform-table .ant-table-row { cursor: pointer; }
+.platform-table .ant-table-row:focus-visible { outline: 2px solid #1677ff; outline-offset: -2px; }
+.platform-connection-card .ant-form-item { margin-bottom: 0; }
+.platform-details .ant-alert { margin-bottom: 24px; }
+.platform-detail-section { padding-bottom: 24px; margin-bottom: 24px; border-bottom: 1px solid #f0f0f0; }
+.platform-detail-section:last-child { padding-bottom: 0; margin-bottom: 0; border-bottom: 0; }
+.platform-detail-section h5 { margin: 0 0 16px; }
+.platform-account-status { margin-top: 10px; }
+.platform-detail-section .ant-list-item { padding-top: 0; }
+@media (max-width: 760px) {
+  .platform-toolbar > .ant-flex { width: 100%; justify-content: space-between; }
+  .platform-table .ant-table-cell { padding: 16px !important; }
+  .platform-connection-panels .ant-collapse-header { padding: 16px !important; }
+  .platform-connection-panels .ant-collapse-body { padding: 4px 16px 16px !important; }
+}
